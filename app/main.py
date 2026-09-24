@@ -7,7 +7,7 @@ from auth_watch import AuthWatcher
 from integrity import IntegrityWatcher
 from notify import Notifier
 from procnet_watch import ProcNetWatcher
-from status_writer import write_status
+from status_writer import report_status
 
 CONFIG_PATH = "/app/config.yaml"
 
@@ -19,7 +19,8 @@ def load_config():
 
 def main():
     config = load_config()
-    notifier = Notifier(config.get("notify", {}), config.get("ai_triage", {}))
+    central_config = config.get("central", {})
+    notifier = Notifier(config.get("notify", {}), config.get("ai_triage", {}), central_config)
     notifier.alert("startup", "hit-linux-ids を起動しました", "info")
 
     watchers = []
@@ -38,7 +39,7 @@ def main():
                 w.check()
             except Exception as e:  # 1つの監視の異常で全体を落とさない
                 notifier.alert("main", f"{type(w).__name__} でエラー: {e}", "error")
-        write_status()
+        report_status(central_config)
         time.sleep(interval)
 
 

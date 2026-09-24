@@ -4,6 +4,24 @@
 # 監視ループの間隔（秒）
 interval_seconds: 60
 
+# --- 中央WebUIへの送信（マルチホスト監視） ---
+# このエージェントが検知したアラート・状態スナップショットを、
+# 司令塔WebUI(hit-linux-ids-webui、通常はgate 1台だけで稼働)へHTTPで送信する。
+#
+# 重要: webui_url / ingest_token / host_label はホストごとに値が異なるのに
+# config.yaml自体はgit管理下で全ホスト共通デプロイされる（CIが
+# `git reset --hard`するため、ホストで直接編集しても次回デプロイで消える）。
+# そのため実際の値はこの下のプレースホルダーではなく、各ホストの
+# .env（gitignore対象、docker composeが自動読み込み）で
+# CENTRAL_WEBUI_URL / CENTRAL_INGEST_TOKEN / CENTRAL_HOST_LABEL として
+# 設定すること。config.yaml側の値は環境変数が無い場合のフォールバックに過ぎない。
+central:
+  enabled: true
+  webui_url: ""   # 例(.envに): CENTRAL_WEBUI_URL=http://192.168.0.18:8877
+  ingest_token: ""  # 例(.envに): CENTRAL_INGEST_TOKEN=xxxx
+  host_label: ""    # 例(.envに): CENTRAL_HOST_LABEL=h-1 （空ならOSのホスト名を自動使用）
+  timeout_seconds: 5
+
 # --- 認証ログ監視 ---
 auth_watch:
   enabled: true

@@ -21,7 +21,8 @@ jobs:
         run: |
           cd ~/docker/hit-linux-ids
           mkdir -p data
-          docker compose up -d --build
+          # gateは司令塔WebUIも同居させるので --profile server を付ける
+          docker compose --profile server up -d --build
 
       - name: Health check
         run: |

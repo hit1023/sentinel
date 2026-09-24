@@ -1,20 +1,33 @@
-"""hit-linux-ids WebUI: エージェントが書き出す /data配下のファイルを読み、
-REST + WebSocketでリアルタイムにダッシュボードへ配信する"""
+"""hit-linux-ids WebUI: 複数ホストのエージェントから /api/ingest 経由で
+届くアラート・状態スナップショットを集約し、REST + WebSocketで配信する司令塔。"""
 import asyncio
 import json
 import os
 import time
+import uuid
 from collections import Counter
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse
+from fastapi import FastAPI, Header, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
 
 DATA_DIR = os.environ.get("IDS_DATA_DIR", "/data")
 ALERTS_JSONL = os.path.join(DATA_DIR, "alerts.jsonl")
-STATUS_JSON = os.path.join(DATA_DIR, "status.json")
+HOSTS_STATUS_JSON = os.path.join(DATA_DIR, "hosts_status.json")
+INGEST_TOKEN = os.environ.get("INGEST_TOKEN", "")
+# 何秒アップデートが無ければそのホストをオフライン扱いにするか
+# （エージェントのinterval_secondsの3倍程度を想定した既定値）
+HOST_STALE_SECONDS = int(os.environ.get("HOST_STALE_SECONDS", "300"))
 
 app = FastAPI(title="hit-linux-ids WebUI")
+
+
+def _check_token(authorization: str | None):
+    if not INGEST_TOKEN:
+        # トークン未設定の場合は開発用途として無認証で許可する
+        return
+    expected = f"Bearer {INGEST_TOKEN}"
+    if authorization != expected:
+        raise HTTPException(status_code=401, detail="invalid ingest token")
 
 
 def _read_alerts(limit: int = 200):
@@ -35,31 +48,116 @@ def _read_alerts(limit: int = 200):
     return records
 
 
-def _read_status():
-    if not os.path.exists(STATUS_JSON):
+def _append_alert(record: dict):
+    os.makedirs(os.path.dirname(ALERTS_JSONL), exist_ok=True)
+    with open(ALERTS_JSONL, "a", encoding="utf-8") as f:
+        f.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+
+def _read_hosts_status() -> dict:
+    if not os.path.exists(HOSTS_STATUS_JSON):
         return {}
     try:
-        with open(STATUS_JSON, "r", encoding="utf-8") as f:
+        with open(HOSTS_STATUS_JSON, "r", encoding="utf-8") as f:
             return json.load(f)
     except (OSError, json.JSONDecodeError):
         return {}
 
 
+def _write_hosts_status(data: dict):
+    os.makedirs(os.path.dirname(HOSTS_STATUS_JSON), exist_ok=True)
+    tmp_path = HOSTS_STATUS_JSON + ".tmp"
+    with open(tmp_path, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False)
+    os.replace(tmp_path, HOSTS_STATUS_JSON)
+
+
+@app.post("/api/ingest/alert")
+async def ingest_alert(payload: dict, authorization: str | None = Header(default=None)):
+    _check_token(authorization)
+    record = dict(payload)
+    record.setdefault("id", uuid.uuid4().hex)
+    record.setdefault("host", "unknown")
+    now = time.time()
+    record.setdefault("epoch", now)
+    if "timestamp" not in record:
+        record["timestamp"] = time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(record["epoch"]))
+    _append_alert(record)
+    return {"ok": True, "id": record["id"]}
+
+
+@app.post("/api/ingest/status")
+async def ingest_status(payload: dict, authorization: str | None = Header(default=None)):
+    _check_token(authorization)
+    host = payload.get("host") or "unknown"
+    hosts = _read_hosts_status()
+    hosts[host] = {**payload, "host": host, "received_at": time.time()}
+    _write_hosts_status(hosts)
+    return {"ok": True}
+
+
+@app.get("/api/hosts")
+def api_hosts():
+    hosts = _read_hosts_status()
+    now = time.time()
+    out = []
+    for host, info in hosts.items():
+        last_seen = info.get("received_at") or info.get("updated_at") or 0
+        out.append({**info, "online": (now - last_seen) <= HOST_STALE_SECONDS})
+    out.sort(key=lambda h: h.get("host", ""))
+    return {"hosts": out, "server_time": now}
+
+
 @app.get("/api/alerts")
-def api_alerts(limit: int = 200):
-    return {"alerts": list(reversed(_read_alerts(limit)))}
+def api_alerts(limit: int = 200, host: str | None = None):
+    alerts = _read_alerts(limit if not host else 5000)
+    if host:
+        alerts = [a for a in alerts if a.get("host") == host][-limit:]
+    return {"alerts": list(reversed(alerts))}
 
 
 @app.get("/api/stats")
 def api_stats():
-    alerts = _read_alerts(2000)
+    alerts = _read_alerts(5000)
     now = time.time()
     last_24h = [a for a in alerts if now - a.get("epoch", 0) <= 86400]
     sev_counter = Counter(a.get("severity", "unknown") for a in last_24h)
     cat_counter = Counter(a.get("category", "unknown") for a in last_24h)
-    status = _read_status()
+
+    hosts_status = _read_hosts_status()
+    hosts_out = []
+    online_cpu = []
+    online_mem = []
+    total_processes = 0
+    total_ports = 0
+    for host, info in hosts_status.items():
+        last_seen = info.get("received_at") or info.get("updated_at") or 0
+        online = (now - last_seen) <= HOST_STALE_SECONDS
+        hosts_out.append({**info, "online": online})
+        if online:
+            if info.get("cpu_percent") is not None:
+                online_cpu.append(info["cpu_percent"])
+            if info.get("mem_percent") is not None:
+                online_mem.append(info["mem_percent"])
+            total_processes += info.get("process_count") or 0
+            total_ports += info.get("listen_port_count") or 0
+    hosts_out.sort(key=lambda h: h.get("host", ""))
+
+    aggregate = {
+        "process_count": total_processes or None,
+        "listen_port_count": total_ports or None,
+        "cpu_percent": (sum(online_cpu) / len(online_cpu)) if online_cpu else None,
+        "mem_percent": (sum(online_mem) / len(online_mem)) if online_mem else None,
+        "updated_at": max(
+            (h.get("received_at") or 0 for h in hosts_out), default=None
+        ) or None,
+        "online_host_count": sum(1 for h in hosts_out if h["online"]),
+        "host_count": len(hosts_out),
+    }
+
     return {
-        "status": status,
+        "status": aggregate,
+        "hosts": hosts_out,
         "total_alerts_24h": len(last_24h),
         "by_severity": dict(sev_counter),
         "by_category": dict(cat_counter),

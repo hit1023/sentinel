@@ -1,4 +1,5 @@
 services:
+  # 監視エージェント本体。全ホストで常に起動する（デフォルトプロファイル）。
   hit-linux-ids:
     build: .
     container_name: hit-linux-ids
@@ -13,6 +14,14 @@ services:
       # このディレクトリに .env ファイルを作り CF_AI_GATEWAY_TOKEN=xxxx と書く
       # （docker composeが自動読み込みする、.gitignore済み）
       - CF_AI_GATEWAY_TOKEN=${CF_AI_GATEWAY_TOKEN:-}
+      # 中央WebUI(hit-linux-ids-webui)へアラートを送るための共有トークン。
+      # WebUI側のINGEST_TOKENと必ず一致させること。
+      - CENTRAL_INGEST_TOKEN=${CENTRAL_INGEST_TOKEN:-}
+      # 司令塔WebUIのURL。ホストごとに.envで指定する
+      # （gateなら http://localhost:8877 、それ以外はgateのLAN IP）。
+      - CENTRAL_WEBUI_URL=${CENTRAL_WEBUI_URL:-}
+      # ダッシュボード上でのホスト表示名。空ならOSのホスト名を自動使用。
+      - CENTRAL_HOST_LABEL=${CENTRAL_HOST_LABEL:-}
     volumes:
       - ./app/config.yaml:/app/config.yaml:ro
       - ./data:/data
@@ -23,15 +32,21 @@ services:
       # ファイル整合性監視用にホストのファイルシステムを読み取り専用でマウント
       - /:/hostfs:ro
 
+  # 司令塔WebUI。複数ホストのagentからのアラートを集約する側なので、
+  # 通常は1台（例: gate）だけで動かせばよい。
+  # 起動するには `docker compose --profile server up -d --build` のように
+  # --profile server を明示する（付けなければagentだけが起動する）。
   hit-linux-ids-webui:
     build: ./webui
     container_name: hit-linux-ids-webui
     restart: unless-stopped
-    depends_on:
-      - hit-linux-ids
+    profiles:
+      - server
     ports:
       - "8877:8000"
     environment:
       - IDS_DATA_DIR=/data
+      # このトークンをagent側のCENTRAL_INGEST_TOKENと一致させる
+      - INGEST_TOKEN=${CENTRAL_INGEST_TOKEN:-}
     volumes:
-      - ./data:/data:ro
+      - ./data:/data

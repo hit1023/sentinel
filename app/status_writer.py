@@ -1,17 +1,18 @@
-"""WebUI向けの現在状態スナップショットを /data/status.json に書き出す"""
+"""ホストの現在状態スナップショットを組み立て、中央WebUIへHTTP POSTする"""
 import json
-import os
 import time
+import urllib.error
+import urllib.request
 
 try:
     import psutil
 except ImportError:
     psutil = None
 
-STATUS_PATH = "/data/status.json"
+import central_config as central_config_mod
 
 
-def write_status(extra: dict | None = None):
+def build_snapshot() -> dict:
     snapshot = {
         "updated_at": time.time(),
         "process_count": None,
@@ -36,14 +37,32 @@ def write_status(extra: dict | None = None):
             snapshot["mem_percent"] = psutil.virtual_memory().percent
         except (psutil.Error, OSError):
             pass
-    if extra:
-        snapshot.update(extra)
+    return snapshot
 
+
+def report_status(central_config: dict):
+    """組み立てたスナップショットを中央WebUIの/api/ingest/statusへ送信する。
+    central.enabledがfalse、あるいは送信失敗時は静かに諦める
+    （ステータス更新の失敗で監視ループ自体を止めない）。"""
+    resolved = central_config_mod.resolve(central_config)
+    if not resolved["enabled"] or not resolved["webui_url"]:
+        return
+
+    snapshot = build_snapshot()
+    snapshot["host"] = resolved["host_label"]
+
+    token = resolved["ingest_token"]
+    timeout = resolved["timeout_seconds"]
+    webui_url = resolved["webui_url"]
+
+    url = f"{webui_url}/api/ingest/status"
+    data = json.dumps(snapshot, ensure_ascii=False).encode("utf-8")
+    headers = {"Content-Type": "application/json"}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    req = urllib.request.Request(url, data=data, headers=headers, method="POST")
     try:
-        os.makedirs(os.path.dirname(STATUS_PATH), exist_ok=True)
-        tmp_path = STATUS_PATH + ".tmp"
-        with open(tmp_path, "w", encoding="utf-8") as f:
-            json.dump(snapshot, f, ensure_ascii=False)
-        os.replace(tmp_path, STATUS_PATH)
-    except OSError as e:
-        print(f"status.json の書き込みに失敗: {e}", flush=True)
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            resp.read()
+    except (urllib.error.URLError, TimeoutError, OSError) as e:
+        print(f"中央WebUIへのステータス送信に失敗: {e}", flush=True)

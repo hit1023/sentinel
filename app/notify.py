@@ -1,4 +1,4 @@
-"""アラート通知（ローカルログ + 構造化JSONL + オプションでWebhook POST + AIトリアージ）"""
+"""アラート通知（中央WebUIへHTTP送信 + ローカルログ + Webhook + AIトリアージ）"""
 import datetime
 import json
 import os
@@ -7,18 +7,22 @@ import urllib.request
 import urllib.error
 
 import ai_triage
+import central_config as central_config_mod
 
 
 class Notifier:
-    def __init__(self, config: dict, ai_triage_config: dict | None = None):
+    def __init__(self, config: dict, ai_triage_config: dict | None = None, central_config: dict | None = None):
         self.log_file = config.get("log_file", "/data/alerts.log")
-        # WebUIがリアルタイムに読むための構造化ログ（1行1JSON）
-        self.jsonl_file = config.get(
-            "jsonl_file", os.path.join(os.path.dirname(self.log_file), "alerts.jsonl")
-        )
         self.webhook_url = config.get("webhook_url") or None
         self.webhook_token = config.get("webhook_token") or None
         self.ai_triage_config = ai_triage_config or {}
+
+        resolved = central_config_mod.resolve(central_config)
+        self.central_enabled = resolved["enabled"]
+        self.central_webui_url = resolved["webui_url"]
+        self.central_token = resolved["ingest_token"]
+        self.central_timeout = resolved["timeout_seconds"]
+        self.host_label = resolved["host_label"]
 
     def alert(self, category: str, message: str, severity: str = "warning"):
         now = datetime.datetime.now()
@@ -57,6 +61,7 @@ class Notifier:
             "id": uuid.uuid4().hex,
             "timestamp": ts,
             "epoch": now.timestamp(),
+            "host": self.host_label,
             "category": category,
             "severity": effective_severity,
             "original_severity": severity if ai_dismissed else None,
@@ -64,16 +69,26 @@ class Notifier:
             "ai_summary": ai_summary,
             "ai_dismissed": ai_dismissed,
         }
-        try:
-            os.makedirs(os.path.dirname(self.jsonl_file), exist_ok=True)
-            with open(self.jsonl_file, "a", encoding="utf-8") as f:
-                f.write(json.dumps(record, ensure_ascii=False) + "\n")
-        except OSError as e:
-            print(f"JSONLアラートの書き込みに失敗: {e}", flush=True)
+
+        if self.central_enabled and self.central_webui_url:
+            self._send_central(record)
 
         # AIが非脅威と判定して静かにしたものはWebhook(LINE/Push等)へは飛ばさない
         if self.webhook_url and not ai_dismissed:
             self._send_webhook(record)
+
+    def _send_central(self, record: dict):
+        url = f"{self.central_webui_url}/api/ingest/alert"
+        data = json.dumps(record, ensure_ascii=False).encode("utf-8")
+        headers = {"Content-Type": "application/json"}
+        if self.central_token:
+            headers["Authorization"] = f"Bearer {self.central_token}"
+        req = urllib.request.Request(url, data=data, headers=headers, method="POST")
+        try:
+            with urllib.request.urlopen(req, timeout=self.central_timeout) as resp:
+                resp.read()
+        except (urllib.error.URLError, TimeoutError, OSError) as e:
+            print(f"中央WebUIへの送信に失敗: {e}", flush=True)
 
     def _send_webhook(self, record: dict):
         payload = {"source": "hit-linux-ids", **record}

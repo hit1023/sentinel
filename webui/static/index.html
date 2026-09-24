@@ -48,9 +48,10 @@
       </g>
     </svg>
     <h1 data-text="SENTINEL">SENTINEL</h1>
-    <span class="brand-sub">hit-linux-ids // real-time host defense</span>
+    <span class="brand-sub">hit-linux-ids // multi-host real-time defense</span>
   </div>
   <div class="conn-status">
+    <span class="host-count-badge" id="hostCountBadge" title="オンラインホスト数">-- HOSTS</span>
     <span id="connDot" class="dot dot-off"></span>
     <span id="connLabel">CONNECTING…</span>
     <span class="clock" id="clock">--:--:--</span>
@@ -103,7 +104,7 @@
   <section class="mid-grid">
 
     <div class="panel cpu-panel">
-      <div class="panel-head"><span>HOST CPU WAVEFORM</span><span class="stat-value cpu-panel-value" id="statCpuBig">--%</span></div>
+      <div class="panel-head"><span>FLEET CPU WAVEFORM（全ホスト平均）</span><span class="stat-value cpu-panel-value" id="statCpuBig">--%</span></div>
       <canvas class="wave" id="cpuWave" width="600" height="120"></canvas>
     </div>
 
@@ -111,12 +112,11 @@
       <div class="panel-head"><span>CATEGORY BREAKDOWN (24H)</span></div>
       <div class="bars" id="categoryBars"></div>
 
-      <div class="panel-head" style="margin-top:20px;"><span>SYSTEM STATUS</span></div>
-      <div class="sysline">MEM USAGE <span id="statMem">--%</span></div>
-      <div class="meter"><div class="meter-fill" id="memMeter"></div></div>
-      <div class="sysline">CPU USAGE <span id="statCpu2">--%</span></div>
-      <div class="meter"><div class="meter-fill" id="cpuMeter"></div></div>
-      <div class="sysline" style="margin-top:14px;">LAST AGENT UPDATE</div>
+      <div class="panel-head" style="margin-top:20px;"><span>HOSTS</span></div>
+      <div class="hosts-list" id="hostsList">
+        <div class="mono-dim">ホストからの報告待ち…</div>
+      </div>
+      <div class="sysline" style="margin-top:14px;">LAST UPDATE (ANY HOST)</div>
       <div class="mono-dim" id="lastUpdate">--</div>
     </div>
 
@@ -128,7 +128,7 @@
         <span class="term-dot dot-red"></span>
         <span class="term-dot dot-amber"></span>
         <span class="term-dot dot-green"></span>
-        <span class="term-title">root@sentinel:~# tail -f /var/log/threats</span>
+        <span class="term-title">sentinel:~# tail -f /var/log/threats --all-hosts</span>
         <span class="pulse-dot"></span>
       </div>
       <div class="feed" id="feed"></div>

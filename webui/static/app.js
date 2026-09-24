@@ -31,10 +31,14 @@ function renderAlert(a, prepend, highlight) {
   const dismissedBadge = a.ai_dismissed
     ? `<span class="ai-dismissed-badge" title="元の重大度: ${(a.original_severity || "").toUpperCase()}">AI SILENCED</span>`
     : "";
+  const hostBadge = a.host
+    ? `<span class="host-badge">${escapeHtml(a.host)}</span>`
+    : "";
   div.innerHTML =
     `<div class="feed-line-main">` +
     `<span class="sev-icon">${SEV_ICON[sevClass] || "●"}</span>` +
     `<span class="ts">${ts}</span>` +
+    hostBadge +
     `<span class="cat">${a.category || ""}</span>` +
     dismissedBadge +
     `<span class="msg">${escapeHtml(a.message || "")}</span>` +
@@ -335,22 +339,43 @@ async function loadStats() {
     pushSparkValue("proc", st.process_count ?? 0);
     pushSparkValue("ports", st.listen_port_count ?? 0);
     const cpu = st.cpu_percent;
-    const mem = st.mem_percent;
     pushCpuValue(cpu ?? 0);
     document.getElementById("statCpuBig").textContent = cpu != null ? cpu.toFixed(0) + "%" : "--%";
-    document.getElementById("statCpu2").textContent = cpu != null ? cpu.toFixed(0) + "%" : "--%";
-    document.getElementById("statMem").textContent = mem != null ? mem.toFixed(0) + "%" : "--%";
-    document.getElementById("cpuMeter").style.width = (cpu || 0) + "%";
-    document.getElementById("memMeter").style.width = (mem || 0) + "%";
 
     if (st.updated_at) {
       const d = new Date(st.updated_at * 1000);
       document.getElementById("lastUpdate").textContent = d.toLocaleString("ja-JP");
     }
 
+    const hostCountBadge = document.getElementById("hostCountBadge");
+    hostCountBadge.textContent = `${st.online_host_count ?? 0}/${st.host_count ?? 0} HOSTS`;
+
+    renderHostsList(data.hosts || []);
     renderCategoryBars(data.by_category || {});
   } catch (e) {
     console.error("stats取得に失敗", e);
+  }
+}
+
+function renderHostsList(hosts) {
+  const container = document.getElementById("hostsList");
+  if (!hosts.length) {
+    container.innerHTML = '<div class="mono-dim">ホストからの報告待ち…</div>';
+    return;
+  }
+  container.innerHTML = "";
+  for (const h of hosts) {
+    const row = document.createElement("div");
+    row.className = "host-row" + (h.online ? "" : " offline");
+    const cpu = h.cpu_percent != null ? h.cpu_percent.toFixed(0) + "%" : "--";
+    const mem = h.mem_percent != null ? h.mem_percent.toFixed(0) + "%" : "--";
+    row.innerHTML = `
+      <span class="host-dot ${h.online ? "dot-on" : "dot-off"}"></span>
+      <span class="host-name">${escapeHtml(h.host || "unknown")}</span>
+      <span class="host-metric">CPU ${cpu}</span>
+      <span class="host-metric">MEM ${mem}</span>
+    `;
+    container.appendChild(row);
   }
 }
 

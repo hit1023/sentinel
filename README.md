@@ -1,7 +1,12 @@
-# hit-linux-ids
+# hit-linux-ids（SENTINEL）
 
-学習・研究用の軽量ホスト型IDS（侵入検知）。Linuxサーバー（想定: gate, 192.168.0.18）上で
-Dockerコンテナとして動作し、以下3種類の異常を検知してアラートを出す。
+学習・研究用の軽量ホスト型IDS（侵入検知）。**マネージャー/エージェント構成**で、
+複数のLinuxホストを1つのダッシュボードから横断監視できる。
+
+- **エージェント**（`app/`）: 監視対象の各ホストで動く。認証ログ・ファイル整合性・
+  プロセス/ネットワークの3種類を監視し、検知結果を司令塔WebUIへHTTPで送信する
+- **司令塔WebUI**（`webui/`）: 通常1台（gate想定）だけで動かす。全ホストからの
+  アラートを集約し、サイバーパンク風リアルタイムダッシュボードとして表示する
 
 **注意**: 商用IDS（Wazuh/OSSEC/AIDE等）の代替ではなく、学習目的の自作ツール。
 検知ロジックは単純なルールベースであり、誤検知・見逃しがあり得る。
@@ -68,44 +73,91 @@ CRITICAL/WARNINGアラート発生時、生ログをLLMに渡して日本語1〜
 - Cloudflare側のエラー・タイムアウト（既定8秒）時は静かに諦め、通知自体は止めない
   （`ai_summary` フィールドがnullのまま記録される）。
 
-## デプロイ（CI/CD、gate想定）
+## マルチホスト構成（agent / server）
+
+`docker-compose.yml` には2つのサービスがある:
+
+- `hit-linux-ids`（エージェント、既定プロファイルで常に起動）
+- `hit-linux-ids-webui`（司令塔WebUI、`profiles: [server]` — 明示的に
+  `--profile server` を付けたホストだけで起動する）
+
+**司令塔ホスト**（例: gate、agentとwebui同居）:
+```bash
+docker compose --profile server up -d --build
+```
+
+**エージェントのみのホスト**（例: h-1、Mac mini。webuiは起動しない）:
+```bash
+docker compose up -d --build
+```
+
+### ホスト固有設定は必ず`.env`で
+
+`app/config.yaml` はgit管理下でどのホストにも同じ内容がデプロイされる
+（gate用のCI/CDは`git reset --hard`するため、config.yamlをホスト上で直接編集しても
+次のpushで消える）。**WebUIのURL・共有トークン・ホスト表示名はホストごとに
+異なるべき値なので、必ず各ホストの`~/docker/hit-linux-ids/.env`（gitignore対象、
+docker composeが自動読み込み）に書く：**
+
+```bash
+# 全ホスト共通の値（1つ生成して使い回す）
+CENTRAL_INGEST_TOKEN=<openssl rand -base64 32 等で生成した共有トークン>
+
+# 司令塔WebUIのURL。gate自身（司令塔ホスト）なら:
+CENTRAL_WEBUI_URL=http://localhost:8877
+# リモートエージェント（h-1, Macなど）なら、gateのLAN IPを指定:
+# CENTRAL_WEBUI_URL=http://192.168.0.18:8877
+
+# ダッシュボード上の表示名（省略時はOSのホスト名を自動使用）
+CENTRAL_HOST_LABEL=gate
+
+# 司令塔ホストのwebuiサービス自身にも同じトークンを渡す
+# （docker-compose.ymlのhit-linux-ids-webui.environmentがCENTRAL_INGEST_TOKENを
+#   INGEST_TOKENとして読むので、.envに書くのは1個でよい）
+
+# AIトリアージを使う場合（司令塔・各エージェントどちらでも有効化可）
+CF_AI_GATEWAY_TOKEN=<Workers AI権限のCloudflare APIトークン>
+```
+
+### 新しいホストを追加する手順
+
+1. そのホストに（GitHubの読み取り専用deploy key等で）このリポジトリをclone
+2. `~/docker/hit-linux-ids/.env` を上記の内容で作成
+   （`CENTRAL_WEBUI_URL`は司令塔ホストのIP、`CENTRAL_HOST_LABEL`はそのホスト名）
+3. `app/config.yaml` の `procnet_watch.known_listen_ports` /
+   `known_process_keywords` をそのホストの実際の構成に合わせて調整
+4. `docker compose up -d --build`（司令塔ホストなら `--profile server` を追加）
+5. 司令塔WebUIのダッシュボードの「HOSTS」パネルに新しいホストが現れれば成功
+
+### CI/CD（gateのみ、自動デプロイ）
 
 `main` ブランチへのpushで、gate上の自己ホストGitHub Actionsランナー（ラベル: `sentinel`）が
-自動的に `git pull` → `docker compose up -d --build` → ヘルスチェックを実行する
-（`.github/workflows/deploy.yml`、他プロジェクト(Drift/i-was-here)と同じ方式）。
+自動的に `git pull` → `docker compose --profile server up -d --build` → ヘルスチェックを
+実行する（`.github/workflows/deploy.yml`、他プロジェクト(Drift/i-was-here)と同じ方式）。
+h-1やMac等のエージェント専用ホストは現状CI/CD対象外で、コードを更新したい場合は
+手動で `git pull && docker compose up -d --build` を実行する。
 
 gate側の初回セットアップ（済み）:
 - `~/docker/hit-linux-ids` を `git clone` で配置（デプロイ専用のSSH deploy key経由、read-only）
 - `~/actions-runner-sentinel/` にGitHub Actions self-hosted runnerをsystemdサービスとして常駐
   （`actions.runner.hit1023-sentinel.gate-sentinel.service`）
 
-手動でデプロイし直す場合:
-
-```bash
-ssh gate
-cd ~/docker/hit-linux-ids
-git pull
-docker compose up -d --build
-```
-
-`app/config.yaml` を編集:
-- `auth_watch.log_paths`: gateのディストロに合わせて調整（`/var/log/auth.log` が無ければ
+`app/config.yaml` のホスト非依存の調整項目:
+- `auth_watch.log_paths`: ディストロに合わせて調整（`/var/log/auth.log` が無ければ
   `use_journalctl: true` に切り替え、docker-compose.ymlの journal マウントを有効化）
 - `notify.webhook_url` / `webhook_token`: 通知を飛ばす場合に設定（未設定ならログファイルのみ）
-- `procnet_watch.known_listen_ports` / `known_process_keywords`: gateの実際の構成
-  （technitium-dns, wg-easy, nginx-proxy-manager-jcom, portainer_agent 等）に合わせて調整
-
-起動:
-
-```bash
-docker compose up -d --build
-docker compose logs -f
-```
+- `procnet_watch.known_listen_ports` / `known_process_keywords`: そのホストの実際の構成に
+  合わせて調整（誤検知が多ければここに追加していく）
 
 ## 動作の仕組み・制約
 
 - `pid: host` + `network_mode: host` でホストのプロセス／ネットワーク名前空間を共有し、
   コンテナ内から `psutil` でホスト全体のプロセス・リスニングポートを見る設計。
+  **Mac(Docker Desktop)ではこれが実際のmacOSホストではなく、Docker Desktopが
+  内部で使うLinux VMを見ることになる点に注意**（Linuxサーバーgate/h-1等では
+  正しくホスト本体を監視できる）。Mac miniを「エージェントの1台」として動かす場合、
+  見えるのはあくまでDocker Desktopの内部VM上の状態であり、Mac本体のネイティブな
+  プロセス監視ではない（学習・動作確認用途として割り切って使う）。
 - ファイル整合性監視はホストのルートを `/hostfs` として読み取り専用マウントして実現。
 - 状態（ログ読み込み位置、整合性ベースライン、既知プロセスpid等）は `data/` 配下の
   JSONファイルに永続化される。コンテナを作り直しても `data/` を保持すれば継続する。
