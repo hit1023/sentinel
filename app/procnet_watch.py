@@ -17,6 +17,11 @@ class ProcNetWatcher:
         self.known_ports = set(config.get("known_listen_ports", []))
         self.known_keywords = [k.lower() for k in config.get("known_process_keywords", [])]
         self.cpu_alert_percent = config.get("cpu_alert_percent", 90)
+        # 理論上の上限（全コードフル稼働）を超える値は計測異常とみなして無視する
+        try:
+            self._cpu_sane_max = max(100.0, psutil.cpu_count() * 100.0) if psutil else 100.0
+        except Exception:
+            self._cpu_sane_max = 3200.0
         self._state = self._load_state()
         if psutil is None:
             self.notifier.alert(
@@ -73,7 +78,11 @@ class ProcNetWatcher:
     def _check_processes(self):
         alerted_pids = set(self._state.get("alerted_pids", []))
         current_pids = set()
-        for p in psutil.process_iter(["pid", "name", "cmdline", "cpu_percent"]):
+        # 注意: process_iter()のattrsに"cpu_percent"を含めると、ここでの内部呼び出しと
+        # 下のp.cpu_percent(interval=None)がほぼ無時間差で二重計測になり、OSのクロック
+        # 粒度による丸め誤差で数千%という荒唐無稽な値が出るバグがあった。
+        # cpu_percentは属性取得に含めず、ループ内で一度だけ計測する。
+        for p in psutil.process_iter(["pid", "name", "cmdline"]):
             info = p.info
             pid = info["pid"]
             current_pids.add(pid)
@@ -92,6 +101,9 @@ class ProcNetWatcher:
                 cpu = p.cpu_percent(interval=None)
             except (psutil.NoSuchProcess, psutil.AccessDenied):
                 cpu = 0
+            if cpu > self._cpu_sane_max:
+                # 計測直後の初回呼び出し等で発生する荒唐無稽な値（数千%等）は無視する
+                continue
             if cpu >= self.cpu_alert_percent:
                 self.notifier.alert(
                     "procnet_watch",
