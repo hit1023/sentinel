@@ -73,6 +73,22 @@ function triggerCriticalFlash() {
   }
 }
 
+function updateAiBanner(a, animate) {
+  if (!a || !a.ai_summary) return;
+  const banner = document.getElementById("aiBanner");
+  const sevEl = document.getElementById("aiBannerSev");
+  sevEl.textContent = (a.severity || "").toUpperCase();
+  sevEl.className = "ai-banner-sev " + severityClass(a.severity);
+  document.getElementById("aiBannerText").textContent = a.ai_summary;
+  document.getElementById("aiBannerTime").textContent = a.timestamp || "";
+  banner.style.display = "flex";
+  if (animate) {
+    banner.style.animation = "none";
+    void banner.offsetWidth;
+    banner.style.animation = "";
+  }
+}
+
 function escapeHtml(str) {
   return str
     .replace(/&/g, "&amp;")
@@ -87,6 +103,8 @@ async function loadInitialAlerts() {
     feedEl.innerHTML = "";
     // 新しい順で来るので、上から新しい→古いになるようappendで積む
     data.alerts.forEach((a) => renderAlert(a, false));
+    const latestAi = data.alerts.find((a) => a.ai_summary);
+    if (latestAi) updateAiBanner(latestAi, false);
   } catch (e) {
     console.error("初期アラート取得に失敗", e);
   }
@@ -111,6 +129,7 @@ function connectWs() {
     try {
       const record = JSON.parse(evt.data);
       renderAlert(record, true, true);
+      updateAiBanner(record, true);
     } catch (e) {
       console.error("WSメッセージのパースに失敗", e);
     }
