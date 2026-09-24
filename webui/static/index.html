@@ -69,32 +69,32 @@
   </section>
 
   <section class="stat-row">
-    <div class="stat-card sev-critical">
+    <div class="stat-card sev-critical" data-filter-type="severity" data-filter-value="critical" title="クリックでCRITICALのみ表示">
       <div class="stat-label">CRITICAL / 24H</div>
       <div class="stat-value" id="statCritical">0</div>
       <canvas class="spark" data-key="critical" width="140" height="34"></canvas>
     </div>
-    <div class="stat-card sev-warning">
+    <div class="stat-card sev-warning" data-filter-type="severity" data-filter-value="warning" title="クリックでWARNINGのみ表示">
       <div class="stat-label">WARNING / 24H</div>
       <div class="stat-value" id="statWarning">0</div>
       <canvas class="spark" data-key="warning" width="140" height="34"></canvas>
     </div>
-    <div class="stat-card sev-info">
+    <div class="stat-card sev-info" data-filter-type="severity" data-filter-value="info" title="クリックでINFOのみ表示">
       <div class="stat-label">INFO / 24H</div>
       <div class="stat-value" id="statInfo">0</div>
       <canvas class="spark" data-key="info" width="140" height="34"></canvas>
     </div>
-    <div class="stat-card sev-total">
+    <div class="stat-card sev-total" data-filter-type="clear" title="クリックでフィルタ解除（全件表示）">
       <div class="stat-label">TOTAL ALERTS / 24H</div>
       <div class="stat-value" id="statTotal">0</div>
       <canvas class="spark" data-key="total" width="140" height="34"></canvas>
     </div>
-    <div class="stat-card">
+    <div class="stat-card" data-filter-type="category" data-filter-value="procnet_watch" title="クリックでprocnet_watchのみ表示">
       <div class="stat-label">PROCESSES</div>
       <div class="stat-value" id="statProc">--</div>
       <canvas class="spark" data-key="proc" width="140" height="34"></canvas>
     </div>
-    <div class="stat-card">
+    <div class="stat-card" data-filter-type="category" data-filter-value="procnet_watch" title="クリックでprocnet_watchのみ表示">
       <div class="stat-label">LISTEN PORTS</div>
       <div class="stat-value" id="statPorts">--</div>
       <canvas class="spark" data-key="ports" width="140" height="34"></canvas>
@@ -129,6 +129,10 @@
         <span class="term-dot dot-amber"></span>
         <span class="term-dot dot-green"></span>
         <span class="term-title">sentinel:~# tail -f /var/log/threats --all-hosts</span>
+        <span class="feed-filter-chip" id="feedFilterChip" style="display:none;">
+          FILTER: <span id="feedFilterLabel"></span>
+          <span class="filter-clear" id="feedFilterClear">✕</span>
+        </span>
         <span class="pulse-dot"></span>
       </div>
       <div class="feed" id="feed"></div>

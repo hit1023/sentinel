@@ -324,6 +324,22 @@ body.alert-critical .topbar {
   border-color: rgba(36,240,255,0.6);
   box-shadow: 0 6px 24px rgba(36,240,255,0.15);
 }
+.stat-card[data-filter-type] { cursor: pointer; }
+.stat-card[data-filter-type]:active { transform: translateY(0); }
+.stat-card.filter-active {
+  border-color: var(--neon-cyan);
+  box-shadow: 0 0 0 1px var(--neon-cyan), 0 6px 24px rgba(36,240,255,0.25);
+}
+.stat-card.filter-active::after {
+  content: "▼ FILTERING";
+  position: absolute;
+  bottom: 6px;
+  right: 10px;
+  font-size: 9px;
+  letter-spacing: 1px;
+  color: var(--neon-cyan);
+  text-shadow: 0 0 6px rgba(36,240,255,0.8);
+}
 .stat-card::before {
   content: "";
   position: absolute;
@@ -426,6 +442,27 @@ body.alert-critical .topbar {
   letter-spacing: 0.5px;
   flex: 1;
 }
+
+.feed-filter-chip {
+  display: none;
+  align-items: center;
+  gap: 6px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  padding: 3px 8px;
+  border-radius: 4px;
+  background: rgba(36,240,255,0.12);
+  border: 1px solid rgba(36,240,255,0.5);
+  color: var(--neon-cyan);
+  margin-right: 8px;
+}
+.filter-clear {
+  cursor: pointer;
+  opacity: 0.8;
+  padding: 0 2px;
+}
+.filter-clear:hover { opacity: 1; color: var(--neon-red); }
 
 .feed {
   flex: 1;

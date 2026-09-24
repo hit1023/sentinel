@@ -20,7 +20,19 @@ function severityClass(sev) {
 
 const SEV_ICON = { critical: "▲", error: "✕", warning: "◆", info: "●" };
 
-function renderAlert(a, prepend, highlight) {
+// --- カードクリックによるフィード絞り込み ---
+const MAX_STORED_ALERTS = 500;
+let allAlerts = []; // 表示順（新しい順）で保持する生データ
+let activeFilter = null; // { type: "severity"|"category", value } | null
+
+function matchesFilter(a) {
+  if (!activeFilter) return true;
+  if (activeFilter.type === "severity") return severityClass(a.severity) === activeFilter.value;
+  if (activeFilter.type === "category") return a.category === activeFilter.value;
+  return true;
+}
+
+function buildAlertElement(a) {
   const div = document.createElement("div");
   const sevClass = severityClass(a.severity);
   div.className = "feed-line " + sevClass;
@@ -47,6 +59,26 @@ function renderAlert(a, prepend, highlight) {
   if (a.ai_dismissed) {
     div.classList.add("dismissed");
   }
+  return div;
+}
+
+function renderAlert(a, prepend, highlight) {
+  // フィルタの有無に関わらず生データは常に保持しておく（フィルタ解除時に復元するため）
+  if (prepend) {
+    allAlerts.unshift(a);
+  } else {
+    allAlerts.push(a);
+  }
+  if (allAlerts.length > MAX_STORED_ALERTS) {
+    allAlerts.length = MAX_STORED_ALERTS;
+  }
+
+  const sevClass = severityClass(a.severity);
+  if (!matchesFilter(a)) {
+    return; // フィルタに合わないものはDOMに出さない（データはallAlertsに残っている）
+  }
+
+  const div = buildAlertElement(a);
   if (prepend) {
     feedEl.prepend(div);
   } else {
@@ -63,6 +95,70 @@ function renderAlert(a, prepend, highlight) {
   if (highlight && sevClass === "critical") {
     triggerCriticalFlash();
   }
+}
+
+function reRenderFeed() {
+  feedEl.innerHTML = "";
+  const visible = allAlerts.filter(matchesFilter).slice(0, MAX_FEED_LINES);
+  for (const a of visible) {
+    feedEl.appendChild(buildAlertElement(a));
+  }
+}
+
+const FILTER_LABELS = {
+  severity: { critical: "CRITICAL", warning: "WARNING", info: "INFO", error: "ERROR" },
+  category: {},
+};
+
+function setFilter(filter) {
+  // 同じフィルタを再クリックしたら解除する（トグル動作）
+  if (
+    activeFilter &&
+    filter &&
+    activeFilter.type === filter.type &&
+    activeFilter.value === filter.value
+  ) {
+    filter = null;
+  }
+  activeFilter = filter;
+
+  document.querySelectorAll(".stat-card[data-filter-type]").forEach((card) => {
+    const isActive =
+      activeFilter &&
+      card.dataset.filterType === activeFilter.type &&
+      card.dataset.filterValue === activeFilter.value;
+    card.classList.toggle("filter-active", !!isActive);
+  });
+
+  const chip = document.getElementById("feedFilterChip");
+  const label = document.getElementById("feedFilterLabel");
+  if (activeFilter) {
+    const text =
+      FILTER_LABELS[activeFilter.type]?.[activeFilter.value] || activeFilter.value;
+    label.textContent = text;
+    chip.style.display = "inline-flex";
+  } else {
+    chip.style.display = "none";
+  }
+
+  reRenderFeed();
+}
+
+function initStatCardFilters() {
+  document.querySelectorAll(".stat-card[data-filter-type]").forEach((card) => {
+    card.addEventListener("click", () => {
+      const type = card.dataset.filterType;
+      if (type === "clear") {
+        setFilter(null);
+        return;
+      }
+      setFilter({ type, value: card.dataset.filterValue });
+    });
+  });
+  document.getElementById("feedFilterClear").addEventListener("click", (e) => {
+    e.stopPropagation();
+    setFilter(null);
+  });
 }
 
 function triggerCriticalFlash() {
@@ -85,7 +181,9 @@ function triggerCriticalFlash() {
 }
 
 function updateAiBanner(a, animate) {
-  if (!a || !a.ai_summary) return;
+  // AIが「脅威ではない」と判定して静音化したものは、わざわざ目立つ
+  // TOPバナーには出さない（フィード内には引き続き薄く残る）
+  if (!a || !a.ai_summary || a.ai_dismissed) return;
   const banner = document.getElementById("aiBanner");
   const sevEl = document.getElementById("aiBannerSev");
   sevEl.textContent = (a.severity || "").toUpperCase();
@@ -114,7 +212,7 @@ async function loadInitialAlerts() {
     feedEl.innerHTML = "";
     // 新しい順で来るので、上から新しい→古いになるようappendで積む
     data.alerts.forEach((a) => renderAlert(a, false));
-    const latestAi = data.alerts.find((a) => a.ai_summary);
+    const latestAi = data.alerts.find((a) => a.ai_summary && !a.ai_dismissed);
     if (latestAi) updateAiBanner(latestAi, false);
   } catch (e) {
     console.error("初期アラート取得に失敗", e);
@@ -399,6 +497,7 @@ function renderCategoryBars(byCategory) {
   }
 }
 
+initStatCardFilters();
 loadInitialAlerts();
 connectWs();
 loadStats();

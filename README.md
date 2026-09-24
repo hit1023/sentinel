@@ -119,15 +119,30 @@ CENTRAL_HOST_LABEL=gate
 CF_AI_GATEWAY_TOKEN=<Workers AI権限のCloudflare APIトークン>
 ```
 
-### 新しいホストを追加する手順
+### 新しいホストを追加する手順（`install.sh`推奨）
 
 1. そのホストに（GitHubの読み取り専用deploy key等で）このリポジトリをclone
-2. `~/docker/hit-linux-ids/.env` を上記の内容で作成
-   （`CENTRAL_WEBUI_URL`は司令塔ホストのIP、`CENTRAL_HOST_LABEL`はそのホスト名）
-3. `app/config.yaml` の `procnet_watch.known_listen_ports` /
-   `known_process_keywords` をそのホストの実際の構成に合わせて調整
-4. `docker compose up -d --build`（司令塔ホストなら `--profile server` を追加）
-5. 司令塔WebUIのダッシュボードの「HOSTS」パネルに新しいホストが現れれば成功
+2. `./install.sh` を実行し、対話プロンプトに従って入力する:
+   - 司令塔WebUIのURL（例: `http://192.168.0.18:8877`）
+   - 共有Ingestトークン（司令塔側の`CENTRAL_INGEST_TOKEN`と同じ値）
+   - このホストの表示名（既定はOSのホスト名）
+   - 必要ならAIトリアージ用のCloudflareトークン
+
+   `.env`の作成・`docker compose up -d --build`の実行まで自動で行う
+   （司令塔ホストとして立てる場合は `./install.sh --server`）。
+   非対話で実行したい場合（自動化スクリプト等から）:
+   ```bash
+   ./install.sh --non-interactive \
+     --webui-url http://192.168.0.18:8877 \
+     --token <共有トークン> \
+     --host-label h-1
+   ```
+3. インストーラーが表示するそのホストの実際のリスニングポート一覧を見ながら、
+   `app/config.yaml` の `procnet_watch.known_listen_ports` / `known_process_keywords`
+   をそのホストの構成に合わせて調整（誤検知が多ければここに追記していく）
+4. 司令塔WebUIのダッシュボードの「HOSTS」パネルに新しいホストが現れれば成功
+
+（`install.sh`を使わず手動で`.env`を書いて`docker compose up -d --build`しても同じ）
 
 ### CI/CD（gateのみ、自動デプロイ）
 
