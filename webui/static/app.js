@@ -43,8 +43,18 @@ function buildAlertElement(a) {
   const dismissedBadge = a.ai_dismissed
     ? `<span class="ai-dismissed-badge" title="元の重大度: ${(a.original_severity || "").toUpperCase()}">AI SILENCED</span>`
     : "";
+  const suppressedBadge = a.suppressed
+    ? `<span class="ai-dismissed-badge" title="ルール: ${escapeHtml(a.suppression_pattern || "")}">USER SILENCED</span>`
+    : "";
   const hostBadge = a.host
     ? `<span class="host-badge">${escapeHtml(a.host)}</span>`
+    : "";
+  // 元々critical/warningだったもの（AIやユーザーの判断で既に格下げ済みのものは除く）だけ
+  // 「これは脅威じゃない」ボタンを出す
+  const canSuppress =
+    !a.suppressed && !a.ai_dismissed && ["critical", "warning"].includes((a.severity || "").toLowerCase());
+  const suppressBtn = canSuppress
+    ? `<span class="suppress-btn" title="今後、同じパターンのアラートを自動的にINFO扱いにする">✕ 誤検知</span>`
     : "";
   div.innerHTML =
     `<div class="feed-line-main">` +
@@ -53,13 +63,50 @@ function buildAlertElement(a) {
     hostBadge +
     `<span class="cat">${a.category || ""}</span>` +
     dismissedBadge +
+    suppressedBadge +
     `<span class="msg">${escapeHtml(a.message || "")}</span>` +
+    `<div class="spacer"></div>` +
+    suppressBtn +
     `</div>` +
     aiLine;
-  if (a.ai_dismissed) {
+  if (a.ai_dismissed || a.suppressed) {
     div.classList.add("dismissed");
   }
+  if (canSuppress) {
+    div.querySelector(".suppress-btn").addEventListener("click", (e) => {
+      e.stopPropagation();
+      openSuppressPrompt(a);
+    });
+  }
   return div;
+}
+
+async function openSuppressPrompt(a) {
+  const defaultPattern = (a.message || "").slice(0, 60);
+  const pattern = window.prompt(
+    `今後「${a.category}」カテゴリでこの文字列を含むアラートを自動的にINFO扱いにします。\n` +
+      `（AIの判定に関わらず抑制されます）\n\n一致させる文字列:`,
+    defaultPattern
+  );
+  if (pattern === null || !pattern.trim()) return;
+  const hostOnly = window.confirm(
+    `ホスト「${a.host}」だけに適用しますか？\nOK = このホストのみ / キャンセル = 全ホスト共通`
+  );
+  try {
+    await fetch("/api/suppressions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        category: a.category,
+        pattern: pattern.trim(),
+        host: hostOnly ? a.host : null,
+      }),
+    });
+    loadSuppressions();
+  } catch (e) {
+    console.error("抑制ルールの登録に失敗", e);
+    alert("登録に失敗しました");
+  }
 }
 
 function renderAlert(a, prepend, highlight) {
@@ -183,7 +230,7 @@ function triggerCriticalFlash() {
 function updateAiBanner(a, animate) {
   // AIが「脅威ではない」と判定して静音化したものは、わざわざ目立つ
   // TOPバナーには出さない（フィード内には引き続き薄く残る）
-  if (!a || !a.ai_summary || a.ai_dismissed) return;
+  if (!a || !a.ai_summary || a.ai_dismissed || a.suppressed) return;
   const banner = document.getElementById("aiBanner");
   const sevEl = document.getElementById("aiBannerSev");
   sevEl.textContent = (a.severity || "").toUpperCase();
@@ -215,7 +262,7 @@ async function loadInitialAlerts() {
     feedEl.innerHTML = "";
     // 新しい順で来るので、上から新しい→古いになるようappendで積む
     data.alerts.forEach((a) => renderAlert(a, false));
-    const latestAi = data.alerts.find((a) => a.ai_summary && !a.ai_dismissed);
+    const latestAi = data.alerts.find((a) => a.ai_summary && !a.ai_dismissed && !a.suppressed);
     if (latestAi) updateAiBanner(latestAi, false);
   } catch (e) {
     console.error("初期アラート取得に失敗", e);
@@ -500,8 +547,41 @@ function renderCategoryBars(byCategory) {
   }
 }
 
+async function loadSuppressions() {
+  const container = document.getElementById("suppressionList");
+  if (!container) return;
+  try {
+    const res = await fetch("/api/suppressions");
+    const data = await res.json();
+    const rules = data.suppressions || [];
+    if (!rules.length) {
+      container.innerHTML = '<div class="mono-dim">登録された除外ルールはありません</div>';
+      return;
+    }
+    container.innerHTML = "";
+    for (const rule of rules) {
+      const row = document.createElement("div");
+      row.className = "suppression-row";
+      row.innerHTML = `
+        <span class="cat">${escapeHtml(rule.category)}</span>
+        <span class="suppression-scope">${rule.host ? escapeHtml(rule.host) : "全ホスト"}</span>
+        <span class="suppression-pattern">${escapeHtml(rule.pattern)}</span>
+        <span class="suppression-del" title="このルールを削除">✕</span>
+      `;
+      row.querySelector(".suppression-del").addEventListener("click", async () => {
+        await fetch(`/api/suppressions/${rule.id}`, { method: "DELETE" });
+        loadSuppressions();
+      });
+      container.appendChild(row);
+    }
+  } catch (e) {
+    console.error("抑制ルール取得に失敗", e);
+  }
+}
+
 initStatCardFilters();
 loadInitialAlerts();
 connectWs();
 loadStats();
+loadSuppressions();
 setInterval(loadStats, 3000);

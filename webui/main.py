@@ -54,9 +54,51 @@ def _init_db():
         conn.execute("CREATE INDEX IF NOT EXISTS idx_alerts_epoch ON alerts(epoch)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_alerts_severity ON alerts(severity)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_alerts_host ON alerts(host)")
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS suppressions (
+                id TEXT PRIMARY KEY,
+                host TEXT,
+                category TEXT NOT NULL,
+                pattern TEXT NOT NULL,
+                created_at REAL NOT NULL
+            )
+            """
+        )
 
 
 _init_db()
+
+
+def _load_suppressions() -> list[dict]:
+    with _db_connect() as conn:
+        rows = conn.execute("SELECT * FROM suppressions ORDER BY created_at DESC").fetchall()
+    return [dict(r) for r in rows]
+
+
+def _matches_suppression(record: dict, rule: dict) -> bool:
+    if rule.get("host") and rule["host"] != record.get("host"):
+        return False
+    if rule["category"] != record.get("category"):
+        return False
+    pattern = (rule.get("pattern") or "").strip().lower()
+    if not pattern:
+        return False
+    return pattern in (record.get("message") or "").lower()
+
+
+def _apply_suppressions(record: dict):
+    """AIの判定結果とは無関係に、ユーザーが登録した『これは脅威ではない』ルールに
+    一致するアラートを強制的にINFOへ格下げする。誤検知の再学習をAI任せにせず、
+    確実に黙らせたいケース（例: 開発コマンド、既知の運用ファイル）向け。"""
+    rules = _load_suppressions()
+    for rule in rules:
+        if _matches_suppression(record, rule):
+            record.setdefault("original_severity", record.get("severity", "unknown"))
+            record["severity"] = "info"
+            record["suppressed"] = True
+            record["suppression_pattern"] = rule["pattern"]
+            return
 
 
 def _persist_important(record: dict):
@@ -150,9 +192,42 @@ async def ingest_alert(payload: dict, authorization: str | None = Header(default
     record.setdefault("epoch", now)
     if "timestamp" not in record:
         record["timestamp"] = time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(record["epoch"]))
+    # AIの判定より先に、ユーザー登録の抑制ルールを適用する
+    # （「これは脅威ではない」と一度教えたものはAIの結果を待たず確実に黙らせる）
+    _apply_suppressions(record)
     _append_alert(record)
     _persist_important(record)
     return {"ok": True, "id": record["id"]}
+
+
+@app.get("/api/suppressions")
+def api_list_suppressions():
+    return {"suppressions": _load_suppressions()}
+
+
+@app.post("/api/suppressions")
+async def api_create_suppression(payload: dict):
+    # ダッシュボード(ブラウザ)から直接叩くエンドポイントなので、
+    # エージェント→WebUI間のingestトークンとは別扱い（WebUI自体が無認証設計のため一貫させる）
+    category = (payload.get("category") or "").strip()
+    pattern = (payload.get("pattern") or "").strip()
+    host = (payload.get("host") or "").strip() or None
+    if not category or not pattern:
+        raise HTTPException(status_code=400, detail="category and pattern are required")
+    rule_id = uuid.uuid4().hex
+    with _db_connect() as conn:
+        conn.execute(
+            "INSERT INTO suppressions (id, host, category, pattern, created_at) VALUES (?, ?, ?, ?, ?)",
+            (rule_id, host, category, pattern, time.time()),
+        )
+    return {"ok": True, "id": rule_id}
+
+
+@app.delete("/api/suppressions/{rule_id}")
+async def api_delete_suppression(rule_id: str):
+    with _db_connect() as conn:
+        conn.execute("DELETE FROM suppressions WHERE id = ?", (rule_id,))
+    return {"ok": True}
 
 
 @app.post("/api/ingest/status")
