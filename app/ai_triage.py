@@ -63,6 +63,12 @@ def summarize(category: str, severity: str, message: str, cfg: dict) -> str | No
         headers={
             "Authorization": f"Bearer {ai_cfg['api_token']}",
             "Content-Type": "application/json",
+            # CloudflareのエッジがPythonの既定User-Agentをボットとしてブロックする
+            # (error code: 1010)ため、通常のブラウザ風UAに差し替える
+            "User-Agent": (
+                "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+                "(KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
+            ),
         },
     )
     try:
