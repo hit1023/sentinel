@@ -8,6 +8,11 @@ services:
     network_mode: host
     cap_add:
       - SYS_PTRACE
+    environment:
+      # AIトリアージ用トークン。プレーンテキストでconfig.yamlに書きたくない場合は
+      # このディレクトリに .env ファイルを作り CF_AI_GATEWAY_TOKEN=xxxx と書く
+      # （docker composeが自動読み込みする、.gitignore済み）
+      - CF_AI_GATEWAY_TOKEN=${CF_AI_GATEWAY_TOKEN:-}
     volumes:
       - ./app/config.yaml:/app/config.yaml:ro
       - ./data:/data

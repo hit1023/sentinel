@@ -38,6 +38,36 @@ FastAPI + WebSocketで `data/alerts.jsonl` の追記をtailし、ネオン配色
 - 外部公開する場合はgateのnginx-proxy-manager等でリバースプロキシ＋認証を挟むこと推奨
   （現状WebUI自体には認証機能なし。学習用途・LAN内利用が前提）
 
+## AIトリアージ（Cloudflare AI Gateway）
+
+CRITICAL/WARNINGアラート発生時、生ログをLLMに渡して日本語1〜2文のトリアージコメント
+（何が起きたか・緊急度・次に確認すべきこと）を自動生成し、フィード上にAIバッジ付きで
+表示する機能（`app/ai_triage.py`）。既定は無効。
+
+セットアップ:
+1. Cloudflareダッシュボード → AI → **AI Gateway** で新規Gatewayを作成（名前は任意、例: `sentinel`）
+2. **My Profile → API Tokens** でWorkers AI権限（`Account.Workers AI:Read`で十分）を持つ
+   APIトークンを発行
+3. `~/docker/hit-linux-ids/.env`（gitignore済み、無ければ新規作成）に以下を追記:
+   ```
+   CF_AI_GATEWAY_TOKEN=<発行したトークン>
+   ```
+4. `app/config.yaml` の `ai_triage` セクションを編集:
+   ```yaml
+   ai_triage:
+     enabled: true
+     cloudflare_account_id: "<CloudflareのアカウントID>"
+     cloudflare_gateway_id: "<作成したGateway名>"
+   ```
+5. `docker compose up -d --build`（もしくはCI/CD経由でpush）で反映
+
+- モデルは既定で軽量・高速な `@cf/meta/llama-3.1-8b-instruct-fast`（Workers AI）を使用。
+  他のWorkers AIモデルに変更する場合は `ai_triage.model` を書き換える。
+- トリアージ対象は `ai_triage.trigger_severities`（既定: critical, warning）で絞り込み、
+  INFO等の高頻度アラートでは呼ばない（コスト・レイテンシ抑制）。
+- Cloudflare側のエラー・タイムアウト（既定8秒）時は静かに諦め、通知自体は止めない
+  （`ai_summary` フィールドがnullのまま記録される）。
+
 ## デプロイ（CI/CD、gate想定）
 
 `main` ブランチへのpushで、gate上の自己ホストGitHub Actionsランナー（ラベル: `sentinel`）が

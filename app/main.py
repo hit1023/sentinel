@@ -19,7 +19,7 @@ def load_config():
 
 def main():
     config = load_config()
-    notifier = Notifier(config.get("notify", {}))
+    notifier = Notifier(config.get("notify", {}), config.get("ai_triage", {}))
     notifier.alert("startup", "hit-linux-ids を起動しました", "info")
 
     watchers = []

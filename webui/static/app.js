@@ -25,11 +25,17 @@ function renderAlert(a, prepend, highlight) {
   const sevClass = severityClass(a.severity);
   div.className = "feed-line " + sevClass;
   const ts = a.timestamp || "";
+  const aiLine = a.ai_summary
+    ? `<div class="ai-note"><span class="ai-badge">AI</span>${escapeHtml(a.ai_summary)}</div>`
+    : "";
   div.innerHTML =
+    `<div class="feed-line-main">` +
     `<span class="sev-icon">${SEV_ICON[sevClass] || "●"}</span>` +
     `<span class="ts">${ts}</span>` +
     `<span class="cat">${a.category || ""}</span>` +
-    `<span class="msg">${escapeHtml(a.message || "")}</span>`;
+    `<span class="msg">${escapeHtml(a.message || "")}</span>` +
+    `</div>` +
+    aiLine;
   if (prepend) {
     feedEl.prepend(div);
   } else {

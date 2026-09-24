@@ -1,4 +1,4 @@
-"""アラート通知（ローカルログ + 構造化JSONL + オプションでWebhook POST）"""
+"""アラート通知（ローカルログ + 構造化JSONL + オプションでWebhook POST + AIトリアージ）"""
 import datetime
 import json
 import os
@@ -6,9 +6,11 @@ import uuid
 import urllib.request
 import urllib.error
 
+import ai_triage
+
 
 class Notifier:
-    def __init__(self, config: dict):
+    def __init__(self, config: dict, ai_triage_config: dict | None = None):
         self.log_file = config.get("log_file", "/data/alerts.log")
         # WebUIがリアルタイムに読むための構造化ログ（1行1JSON）
         self.jsonl_file = config.get(
@@ -16,6 +18,7 @@ class Notifier:
         )
         self.webhook_url = config.get("webhook_url") or None
         self.webhook_token = config.get("webhook_token") or None
+        self.ai_triage_config = ai_triage_config or {}
 
     def alert(self, category: str, message: str, severity: str = "warning"):
         now = datetime.datetime.now()
@@ -30,6 +33,14 @@ class Notifier:
         except OSError as e:
             print(f"アラートログの書き込みに失敗: {e}", flush=True)
 
+        ai_summary = None
+        try:
+            ai_summary = ai_triage.summarize(category, severity, message, self.ai_triage_config)
+        except Exception as e:  # AIトリアージの失敗で通知そのものを止めない
+            print(f"AIトリアージに失敗: {e}", flush=True)
+        if ai_summary:
+            print(f"  🤖 {ai_summary}", flush=True)
+
         record = {
             "id": uuid.uuid4().hex,
             "timestamp": ts,
@@ -37,6 +48,7 @@ class Notifier:
             "category": category,
             "severity": severity,
             "message": message,
+            "ai_summary": ai_summary,
         }
         try:
             os.makedirs(os.path.dirname(self.jsonl_file), exist_ok=True)

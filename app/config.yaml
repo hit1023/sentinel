@@ -93,3 +93,24 @@ notify:
   webhook_token: ""
   # 常にローカルログファイルにも書き出す
   log_file: /data/alerts.log
+
+# --- AIトリアージ（Cloudflare AI Gateway経由） ---
+# CRITICAL/WARNINGアラート発生時、生ログをLLMに渡して日本語1〜2文の
+# トリアージコメント（何が起きたか・緊急度・次の一手）を自動生成しフィードに添える。
+ai_triage:
+  enabled: false
+  # このセキュリティレベルのアラートのみAIトリアージする（INFO等は対象外、コスト抑制のため）
+  trigger_severities:
+    - critical
+    - warning
+  # Cloudflareダッシュボード → AI → AI Gateway で作成したGatewayの情報
+  cloudflare_account_id: ""
+  cloudflare_gateway_id: ""
+  # Workers AIのモデル名（軽量・高速なものを推奨）
+  model: "@cf/meta/llama-3.1-8b-instruct-fast"
+  # Workers AI権限を持つCloudflare APIトークン。
+  # ここに直書きせず、環境変数 CF_AI_GATEWAY_TOKEN での指定を推奨
+  # （docker-compose.ymlが .env を自動読み込みする）。
+  api_token: ""
+  # 1回あたりのタイムアウト秒数（超過時は静かに諦め、通知自体は止めない）
+  timeout_seconds: 8
