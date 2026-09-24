@@ -28,14 +28,21 @@ function renderAlert(a, prepend, highlight) {
   const aiLine = a.ai_summary
     ? `<div class="ai-note"><span class="ai-badge">AI</span>${escapeHtml(a.ai_summary)}</div>`
     : "";
+  const dismissedBadge = a.ai_dismissed
+    ? `<span class="ai-dismissed-badge" title="元の重大度: ${(a.original_severity || "").toUpperCase()}">AI SILENCED</span>`
+    : "";
   div.innerHTML =
     `<div class="feed-line-main">` +
     `<span class="sev-icon">${SEV_ICON[sevClass] || "●"}</span>` +
     `<span class="ts">${ts}</span>` +
     `<span class="cat">${a.category || ""}</span>` +
+    dismissedBadge +
     `<span class="msg">${escapeHtml(a.message || "")}</span>` +
     `</div>` +
     aiLine;
+  if (a.ai_dismissed) {
+    div.classList.add("dismissed");
+  }
   if (prepend) {
     feedEl.prepend(div);
   } else {

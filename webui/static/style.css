@@ -516,6 +516,21 @@ body.alert-critical .topbar {
   text-shadow: 0 0 4px rgba(57,255,138,0.6);
 }
 
+.ai-dismissed-badge {
+  flex-shrink: 0;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  padding: 1px 6px;
+  border-radius: 3px;
+  background: rgba(255,255,255,0.05);
+  border: 1px solid rgba(255,255,255,0.18);
+  color: var(--text-dim);
+  cursor: help;
+}
+.feed-line.dismissed { opacity: 0.55; }
+.feed-line.dismissed:hover { opacity: 0.9; }
+
 .feed-line.critical { border-left-color: var(--neon-red); }
 .feed-line.critical .sev-icon { color: var(--neon-red); text-shadow: 0 0 6px var(--neon-red); }
 .feed-line.critical .cat { border-color: rgba(255,56,96,0.4); color: var(--neon-red); background: rgba(255,56,96,0.08); }

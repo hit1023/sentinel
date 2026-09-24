@@ -114,3 +114,8 @@ ai_triage:
   api_token: ""
   # 1回あたりのタイムアウト秒数（超過時は静かに諦め、通知自体は止めない）
   timeout_seconds: 8
+  # trueにすると、AIが「脅威ではない」と判定したCRITICAL/WARNINGを
+  # 自動的にINFOへ格下げする（統計・フラッシュ演出・Webhook通知の対象外になる）。
+  # レコード自体は削除せず ai_dismissed:true として残るため、後から見返せる。
+  # AIの誤判定で見逃しが起きるリスクを許容できる場合のみtrueにすること。
+  auto_dismiss_non_threats: true
