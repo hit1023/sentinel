@@ -48,8 +48,14 @@ class AuthWatcher:
         if not os.path.exists(path) or not os.path.isfile(path):
             # マウント先が存在しない/ディレクトリの場合（Mac開発環境等）は静かにスキップ
             return
-        offset = self._state["offsets"].get(path, 0)
         size = os.path.getsize(path)
+        if path not in self._state["offsets"]:
+            # 初回はファイル末尾から監視開始（既存の巨大な過去ログを読み込んで
+            # 大量通知を出さないため）。過去分を遡って検知したい場合は
+            # state/auth_watch_state.json を削除してから0から始めること。
+            self._state["offsets"][path] = size
+            return
+        offset = self._state["offsets"][path]
         if size < offset:
             # ログローテーションで縮小 → 先頭から読み直す
             offset = 0

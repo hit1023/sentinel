@@ -45,11 +45,20 @@ procnet_watch:
   # 既知のリスニングポート（これ以外の新規LISTENを検知したら通知）
   known_listen_ports:
     - 22    # SSH
+    - 53    # technitium-dns
     - 80    # nginx-proxy-manager
     - 81    # NPM管理画面
     - 443
-    - 51820 # wg-easy VPN
-    - 9000  # portainer agent等
+    - 5355  # technitium-dns (mDNS)
+    - 5380  # technitium-dns 管理画面
+    - 8090  # pm-tool
+    - 8092  # hit-switchbot-webui
+    - 8877  # hit-linux-ids WebUI（自分自身）
+    - 9001  # portainer_agent
+    - 10050 # zabbix_agent2
+    - 51820 # wg-easy VPN (UDP)
+    - 51821 # wg-easy 管理画面
+    - 51822 # wg-easy VPN (ホスト側マッピングポート)
   # プロセス名のホワイトリスト（新規に現れた未知プロセスのうち、ここに無いものだけ通知）
   # 完全一致ではなく部分一致で判定
   known_process_keywords:
@@ -67,6 +76,12 @@ procnet_watch:
     - rsyslog
     - kworker
     - ksoftirqd
+    - zabbix
+    - uvicorn
+    - python
+    - jbd2
+    - irq
+    - rpc.
   # 高CPU使用率プロセスの通知しきい値（%、5秒平均）
   cpu_alert_percent: 90
 
