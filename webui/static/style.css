@@ -282,6 +282,14 @@ body.alert-critical .topbar {
 .ai-banner-sev.warning { background: rgba(255,179,71,0.15); border: 1px solid rgba(255,179,71,0.5); color: var(--neon-amber); }
 .ai-banner-sev.info { background: rgba(57,255,138,0.12); border: 1px solid rgba(57,255,138,0.4); color: var(--neon-green); }
 .ai-banner-sev.error { background: rgba(255,95,216,0.15); border: 1px solid rgba(255,95,216,0.5); color: #ff5fd8; }
+.ai-banner-meta {
+  flex-shrink: 0;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  color: var(--neon-green);
+  opacity: 0.85;
+}
 .ai-banner-text {
   flex: 1;
   font-size: 14px;

@@ -188,6 +188,9 @@ function updateAiBanner(a, animate) {
   const sevEl = document.getElementById("aiBannerSev");
   sevEl.textContent = (a.severity || "").toUpperCase();
   sevEl.className = "ai-banner-sev " + severityClass(a.severity);
+  const host = a.host || "unknown";
+  const category = a.category || "";
+  document.getElementById("aiBannerMeta").textContent = category ? `[${host}] ${category}` : `[${host}]`;
   document.getElementById("aiBannerText").textContent = a.ai_summary;
   document.getElementById("aiBannerTime").textContent = a.timestamp || "";
   banner.style.display = "flex";
