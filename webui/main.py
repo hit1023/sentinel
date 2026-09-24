@@ -3,6 +3,7 @@
 import asyncio
 import json
 import os
+import sqlite3
 import time
 import uuid
 from collections import Counter
@@ -13,12 +14,79 @@ from fastapi.staticfiles import StaticFiles
 DATA_DIR = os.environ.get("IDS_DATA_DIR", "/data")
 ALERTS_JSONL = os.path.join(DATA_DIR, "alerts.jsonl")
 HOSTS_STATUS_JSON = os.path.join(DATA_DIR, "hosts_status.json")
+# CRITICAL/WARNINGだけを長期保管するSQLite（jsonlは直近tail表示用、こちらは監査・検索用）
+ALERTS_DB = os.path.join(DATA_DIR, "alerts_important.db")
+# jsonlに永続保存する重大度（これ以外=infoはjsonl(直近分)のみで十分なため対象外）
+PERSIST_SEVERITIES = {"critical", "warning"}
 INGEST_TOKEN = os.environ.get("INGEST_TOKEN", "")
 # 何秒アップデートが無ければそのホストをオフライン扱いにするか
 # （エージェントのinterval_secondsの3倍程度を想定した既定値）
 HOST_STALE_SECONDS = int(os.environ.get("HOST_STALE_SECONDS", "300"))
 
 app = FastAPI(title="hit-linux-ids WebUI")
+
+
+def _db_connect():
+    os.makedirs(os.path.dirname(ALERTS_DB), exist_ok=True)
+    conn = sqlite3.connect(ALERTS_DB)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def _init_db():
+    with _db_connect() as conn:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS alerts (
+                id TEXT PRIMARY KEY,
+                epoch REAL NOT NULL,
+                timestamp TEXT,
+                host TEXT,
+                category TEXT,
+                severity TEXT,
+                original_severity TEXT,
+                message TEXT,
+                ai_summary TEXT,
+                ai_dismissed INTEGER DEFAULT 0
+            )
+            """
+        )
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_alerts_epoch ON alerts(epoch)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_alerts_severity ON alerts(severity)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_alerts_host ON alerts(host)")
+
+
+_init_db()
+
+
+def _persist_important(record: dict):
+    # 元々critical/warningだったもの（AIに格下げされたものも含む）を対象にする。
+    # そうしないとAIが非脅威判定してinfoに格下げしたアラートが監査ログから漏れる。
+    severity = record.get("severity", "unknown")
+    original_severity = record.get("original_severity", severity)
+    if original_severity not in PERSIST_SEVERITIES:
+        return
+    with _db_connect() as conn:
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO alerts
+                (id, epoch, timestamp, host, category, severity, original_severity,
+                 message, ai_summary, ai_dismissed)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                record.get("id"),
+                record.get("epoch"),
+                record.get("timestamp"),
+                record.get("host"),
+                record.get("category"),
+                severity,
+                original_severity,
+                record.get("message"),
+                record.get("ai_summary"),
+                1 if record.get("ai_dismissed") else 0,
+            ),
+        )
 
 
 def _check_token(authorization: str | None):
@@ -83,6 +151,7 @@ async def ingest_alert(payload: dict, authorization: str | None = Header(default
     if "timestamp" not in record:
         record["timestamp"] = time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(record["epoch"]))
     _append_alert(record)
+    _persist_important(record)
     return {"ok": True, "id": record["id"]}
 
 
@@ -114,6 +183,34 @@ def api_alerts(limit: int = 200, host: str | None = None):
     if host:
         alerts = [a for a in alerts if a.get("host") == host][-limit:]
     return {"alerts": list(reversed(alerts))}
+
+
+@app.get("/api/alerts/history")
+def api_alerts_history(
+    limit: int = 500,
+    host: str | None = None,
+    severity: str | None = None,
+    since_epoch: float | None = None,
+):
+    """CRITICAL/WARNING（元severity）だけをSQLiteから長期検索するエンドポイント。
+    jsonlのtail(直近5000行)と違い、ホストのローテーション・再起動を跨いだ過去分も引ける。"""
+    limit = min(max(limit, 1), 5000)
+    query = "SELECT * FROM alerts WHERE 1=1"
+    params: list = []
+    if host:
+        query += " AND host = ?"
+        params.append(host)
+    if severity:
+        query += " AND (severity = ? OR original_severity = ?)"
+        params.extend([severity, severity])
+    if since_epoch:
+        query += " AND epoch >= ?"
+        params.append(since_epoch)
+    query += " ORDER BY epoch DESC LIMIT ?"
+    params.append(limit)
+    with _db_connect() as conn:
+        rows = conn.execute(query, params).fetchall()
+    return {"alerts": [dict(r) for r in rows]}
 
 
 @app.get("/api/stats")

@@ -54,6 +54,8 @@ integrity_watch:
     - "*/etc/resolv.conf"
     - "*.log"
     - "*.tmp"
+    # CUPSが印刷購読の状態管理のため頻繁に書き換える運用ファイル（改ざんではない）
+    - "*/cups/subscriptions.conf*"
   # ベースライン（初回スキャン結果）の保存先。既存があれば差分検知、なければ新規作成のみ。
   baseline_path: /data/integrity_baseline.json
 
