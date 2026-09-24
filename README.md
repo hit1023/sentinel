@@ -38,16 +38,24 @@ FastAPI + WebSocketで `data/alerts.jsonl` の追記をtailし、ネオン配色
 - 外部公開する場合はgateのnginx-proxy-manager等でリバースプロキシ＋認証を挟むこと推奨
   （現状WebUI自体には認証機能なし。学習用途・LAN内利用が前提）
 
-## セットアップ（gateでの実行を想定）
+## デプロイ（CI/CD、gate想定）
+
+`main` ブランチへのpushで、gate上の自己ホストGitHub Actionsランナー（ラベル: `sentinel`）が
+自動的に `git pull` → `docker compose up -d --build` → ヘルスチェックを実行する
+（`.github/workflows/deploy.yml`、他プロジェクト(Drift/i-was-here)と同じ方式）。
+
+gate側の初回セットアップ（済み）:
+- `~/docker/hit-linux-ids` を `git clone` で配置（デプロイ専用のSSH deploy key経由、read-only）
+- `~/actions-runner-sentinel/` にGitHub Actions self-hosted runnerをsystemdサービスとして常駐
+  （`actions.runner.hit1023-sentinel.gate-sentinel.service`）
+
+手動でデプロイし直す場合:
 
 ```bash
-# gateへ配置
-rsync -av /Volumes/USBSSD/docker/hit-linux-ids/ h-1:~/docker/hit-linux-ids/ --exclude data
-# もしくは直接gate上でgit clone/rsync
-
 ssh gate
 cd ~/docker/hit-linux-ids
-mkdir -p data
+git pull
+docker compose up -d --build
 ```
 
 `app/config.yaml` を編集:

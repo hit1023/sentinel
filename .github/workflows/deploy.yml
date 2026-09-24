@@ -1,0 +1,29 @@
+name: Deploy to gate
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:  # 手動実行も可能
+
+jobs:
+  deploy:
+    runs-on: [self-hosted, sentinel]
+    timeout-minutes: 10
+
+    steps:
+      - name: Pull latest code
+        run: |
+          cd ~/docker/hit-linux-ids
+          git fetch origin main
+          git reset --hard origin/main
+
+      - name: Build and restart
+        run: |
+          cd ~/docker/hit-linux-ids
+          mkdir -p data
+          docker compose up -d --build
+
+      - name: Health check
+        run: |
+          sleep 5
+          curl -sf http://localhost:8877/api/stats > /dev/null && echo "✅ ヘルスチェックOK" || echo "⚠️ ヘルスチェック失敗"
