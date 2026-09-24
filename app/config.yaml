@@ -1,0 +1,80 @@
+# hit-linux-ids 設定ファイル
+# ---------------------------------------------------------
+
+# 監視ループの間隔（秒）
+interval_seconds: 60
+
+# --- 認証ログ監視 ---
+auth_watch:
+  enabled: true
+  # コンテナ内から見えるホストの認証ログパス（docker-composeでread-onlyマウント）
+  log_paths:
+    - /hostlogs/auth.log
+  # journalctl方式（rsyslogがauth.logを吐かないディストロ用）。使う場合はtrueにし、
+  # docker-composeで /var/log/journal を read-only マウントしてください。
+  use_journalctl: false
+  # 同一IPからの失敗ログイン、この回数を超えたらアラート
+  fail_threshold: 5
+  # 上記をカウントする時間窓（秒）
+  fail_window_seconds: 300
+  # 成功ログインも通知するか（新規ログイン検知用）
+  notify_on_success: true
+
+# --- ファイル整合性監視（簡易AIDE） ---
+integrity_watch:
+  enabled: true
+  # 監視対象パス（コンテナ内からは /hostfs 配下にマッピングされる）
+  watch_paths:
+    - /hostfs/etc
+    - /hostfs/root/.ssh
+    - /hostfs/etc/nginx
+    - /hostfs/etc/docker
+  # 除外パターン（fnmatch形式、フルパスに対して判定）
+  exclude_patterns:
+    - "*/etc/mtab"
+    - "*/etc/adjtime"
+    - "*/etc/resolv.conf"
+    - "*.log"
+    - "*.tmp"
+  # ベースライン（初回スキャン結果）の保存先。既存があれば差分検知、なければ新規作成のみ。
+  baseline_path: /data/integrity_baseline.json
+
+# --- プロセス／ネットワーク異常検知 ---
+procnet_watch:
+  enabled: true
+  # 既知のリスニングポート（これ以外の新規LISTENを検知したら通知）
+  known_listen_ports:
+    - 22    # SSH
+    - 80    # nginx-proxy-manager
+    - 81    # NPM管理画面
+    - 443
+    - 51820 # wg-easy VPN
+    - 9000  # portainer agent等
+  # プロセス名のホワイトリスト（新規に現れた未知プロセスのうち、ここに無いものだけ通知）
+  # 完全一致ではなく部分一致で判定
+  known_process_keywords:
+    - dockerd
+    - containerd
+    - sshd
+    - systemd
+    - nginx
+    - wg-easy
+    - node
+    - portainer
+    - technitium
+    - wireguard
+    - cron
+    - rsyslog
+    - kworker
+    - ksoftirqd
+  # 高CPU使用率プロセスの通知しきい値（%、5秒平均）
+  cpu_alert_percent: 90
+
+# --- 通知先 ---
+notify:
+  # pushman/mailman等、既存の通知APIへPOSTする場合のWebhook URL
+  # 例: https://pushman.s-quad.com/api/notify （実際のエンドポイントに合わせて変更）
+  webhook_url: ""
+  webhook_token: ""
+  # 常にローカルログファイルにも書き出す
+  log_file: /data/alerts.log

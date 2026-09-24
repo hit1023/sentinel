@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SENTINEL // hit-linux-ids</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<canvas id="netCanvas"></canvas>
+<div class="scanlines"></div>
+<div class="grid-bg"></div>
+<div class="vignette"></div>
+<div class="flash-overlay" id="flashOverlay"></div>
+<div class="scan-sweep scan-sweep-a"></div>
+<div class="scan-sweep scan-sweep-b"></div>
+
+<header class="topbar">
+  <div class="brand">
+    <svg class="eye-icon" viewBox="0 0 100 100" aria-hidden="true">
+      <defs>
+        <radialGradient id="irisGrad" cx="50%" cy="45%" r="60%">
+          <stop offset="0%" stop-color="#eafffb"/>
+          <stop offset="35%" stop-color="#24f0ff"/>
+          <stop offset="75%" stop-color="#0c6a86"/>
+          <stop offset="100%" stop-color="#04202a"/>
+        </radialGradient>
+      </defs>
+      <g class="eye-blink-group">
+        <path class="eye-lid" d="M4,50 Q50,8 96,50 Q50,92 4,50 Z" />
+        <path class="eye-lashes" d="
+          M17.8,39.3 L11.8,30.3
+          M31.6,32.4 L27.6,22.4
+          M50,29 L50,18
+          M68.4,32.4 L72.4,22.4
+          M82.2,39.3 L88.2,30.3
+        " />
+        <g class="eye-scan">
+          <circle cx="50" cy="50" r="30" class="ring ring-a" />
+          <circle cx="50" cy="50" r="23" class="ring ring-b" />
+          <path class="tick" d="M50,20 L50,26 M50,74 L50,80 M20,50 L26,50 M74,50 L80,50" />
+        </g>
+        <circle cx="50" cy="50" r="16" fill="url(#irisGrad)" />
+        <circle cx="50" cy="50" r="7" fill="#03080a" />
+        <circle class="eye-highlight" cx="54" cy="46" r="2.4" fill="#eafffb" />
+        <circle class="eye-blip" cx="50" cy="50" r="2" />
+      </g>
+    </svg>
+    <h1 data-text="SENTINEL">SENTINEL</h1>
+    <span class="brand-sub">hit-linux-ids // real-time host defense</span>
+  </div>
+  <div class="conn-status">
+    <span id="connDot" class="dot dot-off"></span>
+    <span id="connLabel">CONNECTING…</span>
+    <span class="clock" id="clock">--:--:--</span>
+    <div class="radar" title="scanning…"></div>
+  </div>
+</header>
+
+<main class="layout">
+
+  <section class="stat-row">
+    <div class="stat-card sev-critical">
+      <div class="stat-label">CRITICAL / 24H</div>
+      <div class="stat-value" id="statCritical">0</div>
+      <canvas class="spark" data-key="critical" width="140" height="34"></canvas>
+    </div>
+    <div class="stat-card sev-warning">
+      <div class="stat-label">WARNING / 24H</div>
+      <div class="stat-value" id="statWarning">0</div>
+      <canvas class="spark" data-key="warning" width="140" height="34"></canvas>
+    </div>
+    <div class="stat-card sev-info">
+      <div class="stat-label">INFO / 24H</div>
+      <div class="stat-value" id="statInfo">0</div>
+      <canvas class="spark" data-key="info" width="140" height="34"></canvas>
+    </div>
+    <div class="stat-card sev-total">
+      <div class="stat-label">TOTAL ALERTS / 24H</div>
+      <div class="stat-value" id="statTotal">0</div>
+      <canvas class="spark" data-key="total" width="140" height="34"></canvas>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">PROCESSES</div>
+      <div class="stat-value" id="statProc">--</div>
+      <canvas class="spark" data-key="proc" width="140" height="34"></canvas>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">LISTEN PORTS</div>
+      <div class="stat-value" id="statPorts">--</div>
+      <canvas class="spark" data-key="ports" width="140" height="34"></canvas>
+    </div>
+  </section>
+
+  <section class="mid-grid">
+
+    <div class="panel cpu-panel">
+      <div class="panel-head"><span>HOST CPU WAVEFORM</span><span class="stat-value cpu-panel-value" id="statCpuBig">--%</span></div>
+      <canvas class="wave" id="cpuWave" width="600" height="120"></canvas>
+    </div>
+
+    <div class="panel side-panel">
+      <div class="panel-head"><span>CATEGORY BREAKDOWN (24H)</span></div>
+      <div class="bars" id="categoryBars"></div>
+
+      <div class="panel-head" style="margin-top:20px;"><span>SYSTEM STATUS</span></div>
+      <div class="sysline">MEM USAGE <span id="statMem">--%</span></div>
+      <div class="meter"><div class="meter-fill" id="memMeter"></div></div>
+      <div class="sysline">CPU USAGE <span id="statCpu2">--%</span></div>
+      <div class="meter"><div class="meter-fill" id="cpuMeter"></div></div>
+      <div class="sysline" style="margin-top:14px;">LAST AGENT UPDATE</div>
+      <div class="mono-dim" id="lastUpdate">--</div>
+    </div>
+
+  </section>
+
+  <section class="feed-row">
+    <div class="panel feed-panel">
+      <div class="term-head">
+        <span class="term-dot dot-red"></span>
+        <span class="term-dot dot-amber"></span>
+        <span class="term-dot dot-green"></span>
+        <span class="term-title">root@sentinel:~# tail -f /var/log/threats</span>
+        <span class="pulse-dot"></span>
+      </div>
+      <div class="feed" id="feed"></div>
+      <div class="term-prompt"><span class="prompt-caret">&gt;</span><span class="cursor">_</span></div>
+    </div>
+  </section>
+
+</main>
+
+<script src="netbg.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

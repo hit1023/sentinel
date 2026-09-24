@@ -1,0 +1,32 @@
+services:
+  hit-linux-ids:
+    build: .
+    container_name: hit-linux-ids
+    restart: unless-stopped
+    # ホストのプロセス空間・ネットワーク空間を共有し、ホスト全体を監視対象にする
+    pid: host
+    network_mode: host
+    cap_add:
+      - SYS_PTRACE
+    volumes:
+      - ./app/config.yaml:/app/config.yaml:ro
+      - ./data:/data
+      # 認証ログ（rsyslog系。journalctl方式を使う場合はconfigでuse_journalctl: trueにし、
+      # 下のjournalマウントを有効化してください）
+      - /var/log/auth.log:/hostlogs/auth.log:ro
+      # - /var/log/journal:/var/log/journal:ro
+      # ファイル整合性監視用にホストのファイルシステムを読み取り専用でマウント
+      - /:/hostfs:ro
+
+  hit-linux-ids-webui:
+    build: ./webui
+    container_name: hit-linux-ids-webui
+    restart: unless-stopped
+    depends_on:
+      - hit-linux-ids
+    ports:
+      - "8877:8000"
+    environment:
+      - IDS_DATA_DIR=/data
+    volumes:
+      - ./data:/data:ro
