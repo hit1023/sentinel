@@ -456,7 +456,10 @@ body.alert-critical .topbar {
   animation: pulse 1.2s infinite;
 }
 
-.feed-panel { height: 560px; display: flex; flex-direction: column; padding: 0; overflow: hidden; }
+.feed-panel { height: 560px; display: flex; flex-direction: column; padding: 0; overflow: hidden; transition: height 0.2s ease; }
+.feed-panel.collapsed { height: auto; }
+.feed-panel.collapsed .feed,
+.feed-panel.collapsed .term-prompt { display: none; }
 
 .term-head {
   display: flex;
@@ -466,7 +469,16 @@ body.alert-critical .topbar {
   background: linear-gradient(180deg, rgba(36,240,255,0.09), rgba(36,240,255,0.02));
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
+  cursor: pointer;
+  user-select: none;
 }
+.feed-collapse-chevron {
+  color: var(--text-dim);
+  font-size: 12px;
+  margin-left: 4px;
+  transition: transform 0.2s ease;
+}
+.feed-panel.collapsed .feed-collapse-chevron { transform: rotate(-90deg); }
 .term-dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
 .dot-red { background: var(--neon-red); box-shadow: 0 0 6px var(--neon-red); }
 .dot-amber { background: var(--neon-amber); box-shadow: 0 0 6px var(--neon-amber); }

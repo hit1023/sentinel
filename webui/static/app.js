@@ -285,6 +285,24 @@ function initStatCardFilters() {
   });
 }
 
+// --- ログフィードの折りたたみ（見た目のノイズを減らすための単純なトグル、状態はlocalStorageに保存） ---
+function initFeedCollapse() {
+  const panel = document.getElementById("feedPanel");
+  const toggle = document.getElementById("feedCollapseToggle");
+  if (!panel || !toggle) return;
+  if (localStorage.getItem("sentinelFeedCollapsed") === "1") {
+    panel.classList.add("collapsed");
+  }
+  toggle.addEventListener("click", () => {
+    const collapsed = panel.classList.toggle("collapsed");
+    try {
+      localStorage.setItem("sentinelFeedCollapsed", collapsed ? "1" : "0");
+    } catch (e) {
+      // localStorageが使えない環境でも折りたたみ自体は機能させる
+    }
+  });
+}
+
 function triggerCriticalFlash() {
   const overlay = document.getElementById("flashOverlay");
   overlay.classList.remove("active");
@@ -834,6 +852,7 @@ document.getElementById("reapplySuppressionsBtn")?.addEventListener("click", asy
 });
 
 initStatCardFilters();
+initFeedCollapse();
 loadInitialAlerts();
 connectWs();
 loadStats();

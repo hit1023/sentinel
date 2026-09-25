@@ -159,8 +159,8 @@
   </section>
 
   <section class="feed-row">
-    <div class="panel feed-panel">
-      <div class="term-head">
+    <div class="panel feed-panel" id="feedPanel">
+      <div class="term-head" id="feedCollapseToggle" title="クリックで折りたたみ/展開">
         <span class="term-dot dot-red"></span>
         <span class="term-dot dot-amber"></span>
         <span class="term-dot dot-green"></span>
@@ -169,6 +169,7 @@
           FILTER: <span id="feedFilterLabel"></span>
           <span class="filter-clear" id="feedFilterClear">✕</span>
         </span>
+        <span class="feed-collapse-chevron" id="feedCollapseChevron">▾</span>
         <span class="pulse-dot"></span>
       </div>
       <div class="feed" id="feed"></div>
