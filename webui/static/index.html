@@ -121,6 +121,11 @@
           <p class="mono-dim" style="margin:12px 0 0; font-size:11px;">— Webhook（自前のメール送信APIがある場合）—</p>
           <label class="settings-label">エンドポイントURL（{to, subject, text, from}をJSON POST）</label>
           <input type="text" id="notifyWebhookUrl" placeholder="http://192.168.0.20:8765/send">
+          <p class="mono-dim" style="margin:6px 0 0; font-size:11px;">
+            この形式に対応した送信APIを自分でホストしたい場合は
+            <a href="https://github.com/hit1023/mailman" target="_blank" rel="noopener" style="color:var(--neon-cyan);">hit1023/mailman</a>
+            が使えます（Resend/SES対応の軽量メール送信API、Docker一発で導入可能）。
+          </p>
 
           <div class="settings-actions">
             <span class="mini-btn" id="saveNotifySettingsBtn">保存</span>

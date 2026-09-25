@@ -265,7 +265,10 @@ SMTPだけで動くようにしてあるので、cloneしてすぐ使える。
     [アプリパスワード](https://myaccount.google.com/apppasswords)
     （2段階認証がある場合、通常のログインパスワードではSMTP認証できない）
 - **Webhook**: 独自のメール送信APIがある場合のエンドポイントURL
-  （`{"to": [...], "subject": "...", "text": "...", "from": "..."}` をJSON POSTする）
+  （`{"to": [...], "subject": "...", "text": "...", "from": "..."}` をJSON POSTする）。
+  この形式に対応した送信APIを自分でホストしたい場合は
+  [hit1023/mailman](https://github.com/hit1023/mailman)（Resend/SES対応の軽量メール
+  送信API、Docker一発で導入可能）が使える。
 
 「テスト送信」ボタンで、実際のアラートを経由せずその場で疎通確認ができる
 （`POST /api/notify-settings/test`、有効化トグルの状態に関わらず送信される）。
