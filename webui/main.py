@@ -527,10 +527,13 @@ def api_alerts_history(
     limit: int = 500,
     host: str | None = None,
     severity: str | None = None,
+    category: str | None = None,
     since_epoch: float | None = None,
 ):
     """CRITICAL/WARNING（元severity）だけをSQLiteから長期検索するエンドポイント。
-    jsonlのtail(直近5000行)と違い、ホストのローテーション・再起動を跨いだ過去分も引ける。"""
+    jsonlのtail(直近5000行)と違い、ホストのローテーション・再起動を跨いだ過去分も引ける。
+    ダッシュボードのフィルタ(CRITICAL/WARNINGカード・カテゴリ)から呼ばれ、統計カードの
+    件数とフィード表示の件数が食い違わないようにする。"""
     limit = min(max(limit, 1), 5000)
     query = "SELECT * FROM alerts WHERE 1=1"
     params: list = []
@@ -540,6 +543,9 @@ def api_alerts_history(
     if severity:
         query += " AND (severity = ? OR original_severity = ?)"
         params.extend([severity, severity])
+    if category:
+        query += " AND category = ?"
+        params.append(category)
     if since_epoch:
         query += " AND epoch >= ?"
         params.append(since_epoch)

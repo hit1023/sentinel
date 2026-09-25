@@ -188,12 +188,36 @@ function renderAlert(a, prepend, highlight) {
   }
 }
 
+// CRITICAL/WARNINGは、フィードが持つ直近データ(allAlerts、最大500件)だけでは
+// 統計カードの24H件数と食い違う(古いものが押し出されて0件/数件しか出ないように見える)ため、
+// この2つでフィルタした時だけSQLite(alerts_important.db)の全履歴を取得して表示する。
+const HISTORY_BACKED_SEVERITIES = new Set(["critical", "warning"]);
+let historyAlerts = null; // SQLiteから取得した表示用データ（該当フィルタでない時はnull）
+let historyFetchToken = 0; // 連打・フィルタ切替時に古いfetchの結果を捨てるためのトークン
+
 function reRenderFeed() {
   feedEl.innerHTML = "";
-  const visible = allAlerts.filter(matchesFilter).slice(0, MAX_FEED_LINES);
+  const source = historyAlerts !== null ? historyAlerts : allAlerts;
+  const visible = source.filter(matchesFilter).slice(0, MAX_FEED_LINES);
   for (const a of visible) {
     feedEl.appendChild(buildAlertElement(a));
   }
+}
+
+async function loadHistoryForFilter(filter) {
+  const token = ++historyFetchToken;
+  const params = new URLSearchParams({ limit: "500", severity: filter.value });
+  let data;
+  try {
+    const res = await fetch(`/api/alerts/history?${params}`);
+    data = await res.json();
+  } catch (e) {
+    console.error("history fetch failed", e);
+    return;
+  }
+  if (token !== historyFetchToken) return; // その間に別フィルタへ切り替わっていたら破棄
+  historyAlerts = data.alerts || [];
+  reRenderFeed();
 }
 
 const FILTER_LABELS = {
@@ -230,6 +254,15 @@ function setFilter(filter) {
     chip.style.display = "inline-flex";
   } else {
     chip.style.display = "none";
+  }
+
+  if (activeFilter?.type === "severity" && HISTORY_BACKED_SEVERITIES.has(activeFilter.value)) {
+    label.textContent += "（過去ログ全件）";
+    historyAlerts = null; // 取得中は空扱いにせず、いったん直近データのままにする
+    loadHistoryForFilter(activeFilter);
+  } else {
+    historyFetchToken++; // 進行中のfetchがあれば結果を無視させる
+    historyAlerts = null;
   }
 
   reRenderFeed();
