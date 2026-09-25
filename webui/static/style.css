@@ -733,6 +733,39 @@ body.alert-critical .topbar {
 .modal-close:hover { opacity: 1; color: var(--neon-red); }
 .modal-body { padding: 18px; }
 
+.modal-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 10px 18px 0;
+  border-bottom: 1px solid var(--border);
+}
+.modal-tab {
+  padding: 8px 14px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  color: var(--text-dim);
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+}
+.modal-tab:hover { color: #d7f6ff; }
+.modal-tab.active { color: var(--neon-cyan); border-bottom-color: var(--neon-cyan); }
+
+.settings-form { display: flex; flex-direction: column; gap: 8px; }
+.settings-label { font-size: 11px; color: var(--text-dim); margin-top: 6px; }
+.settings-check { display: flex; align-items: center; gap: 8px; font-size: 13px; color: #d7f6ff; }
+.settings-form input[type="text"] {
+  background: rgba(255,255,255,0.03);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 7px 10px;
+  color: #d7f6ff;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+}
+.settings-form input[type="text"]:focus { outline: none; border-color: var(--neon-cyan); }
+.settings-actions { display: flex; align-items: center; gap: 10px; margin-top: 8px; }
+
 .settings-add-row {
   display: flex;
   gap: 8px;

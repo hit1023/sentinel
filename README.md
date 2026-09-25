@@ -220,7 +220,11 @@ AIの判定に頼らず、**人間が「これは脅威ではない」と一度�
   Cloudflareへの呼び出し自体は減らない点に注意。呼び出し自体を減らしたい場合は
   `config.yaml`の`known_process_keywords`等の恒久的なホワイトリストで対応する）
 
-### 設定タブ / SSH許可リスト（ホワイトリスト）
+### 設定タブ
+
+ヘッダー右上の「⚙ 設定」ボタンから開くモーダルは2タブ構成:
+
+#### 🔐 SSH許可リスト（ホワイトリスト）
 
 ヘッダー右上の「⚙ 設定」ボタンからモーダルを開くと、SSH（auth_watch）専用の
 許可リストを管理できる。汎用的なSUPPRESSION RULESとは別枠で、以下の2種類を登録できる:
@@ -240,6 +244,27 @@ SUPPRESSION RULESと同じ`suppressed`フラグを使うため、SUPPRESSION RUL
 フィード上のauth_watchアラートにIPが含まれる場合は「✓ 許可リストへ」ボタンが出て、
 モーダルを開かずその場でワンクリック登録できる（IPと逆引きドメインの両方が
 取れている場合はどちらを登録するか選べる）。
+
+#### 🔔 メール通知（mailman連携）
+
+CRITICALアラート（抑制ルール・SSH許可リストを経てなお最終的にCRITICALのままの
+ものだけ）を、h-1で稼働している[mailman](https://github.com/hit1023/mailman)
+（`POST /send`、Resend経由の薄いメール送信API）経由でメール通知できる。
+
+設定項目:
+
+- **通知を有効にする**（既定OFF）
+- **宛先メールアドレス**（カンマ区切りで複数指定可）
+- **送信元アドレス**（任意。省略時はmailman側の`DEFAULT_FROM`を使用）
+- **mailmanのエンドポイント**（既定`http://192.168.0.20:8765/send`、h-1への直接LAN内アクセス）
+
+「テスト送信」ボタンで、実際のアラートを経由せずその場で疎通確認ができる
+（`POST /api/notify-settings/test`、有効化トグルの状態に関わらず送信される）。
+
+実装は`webui/main.py`の`_send_critical_email()`。`ingest_alert`が最終severityを
+確定した後、`severity == "critical"`のものだけ`BackgroundTasks`で非同期送信する
+（メール送信の失敗・遅延がアラート取り込み自体をブロックしないようにするため）。
+設定は`app_settings`テーブル（`GET/POST /api/notify-settings`）に保存される。
 
 ### セットアップ手順
 

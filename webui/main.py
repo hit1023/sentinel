@@ -7,10 +7,11 @@ import os
 import re
 import sqlite3
 import time
+import urllib.request
 import uuid
 from collections import Counter, defaultdict
 
-from fastapi import FastAPI, Header, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import BackgroundTasks, FastAPI, Header, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
 
 # auth_watchのアラートメッセージから発信元IPを抜き出す（"from=IP" / "疑い: IP から"の2パターン）
@@ -82,9 +83,98 @@ def _init_db():
             )
             """
         )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS app_settings (
+                key TEXT PRIMARY KEY,
+                value TEXT
+            )
+            """
+        )
 
 
 _init_db()
+
+# --- CRITICALメール通知（mailman連携） ---
+NOTIFY_SETTINGS_DEFAULTS = {
+    "notify_email_enabled": "false",
+    "notify_email_to": "",
+    "notify_email_from": "",
+    # h-1で稼働しているmailmanのエンドポイント（同一LAN内のため直接IPで指定）
+    "mailman_url": "http://192.168.0.20:8765/send",
+}
+
+
+def _get_app_setting(key: str) -> str:
+    with _db_connect() as conn:
+        row = conn.execute("SELECT value FROM app_settings WHERE key = ?", (key,)).fetchone()
+    if row is not None:
+        return row["value"]
+    return NOTIFY_SETTINGS_DEFAULTS.get(key, "")
+
+
+def _set_app_setting(key: str, value: str):
+    with _db_connect() as conn:
+        conn.execute(
+            "INSERT INTO app_settings (key, value) VALUES (?, ?) "
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            (key, value),
+        )
+
+
+def _get_notify_settings() -> dict:
+    return {
+        "enabled": _get_app_setting("notify_email_enabled") == "true",
+        "to": _get_app_setting("notify_email_to"),
+        "from_addr": _get_app_setting("notify_email_from"),
+        "mailman_url": _get_app_setting("mailman_url"),
+    }
+
+
+def _send_critical_email(record: dict, force: bool = False):
+    """CRITICALアラート発生時にmailman(POST /send)経由でメール通知する。
+    ingest_alertのレスポンスをブロックしないよう、呼び出し側でBackgroundTasksとして実行する想定。
+    force=Trueの場合はenabledトグルを無視して送る（設定タブの「テスト送信」用）。"""
+    settings = _get_notify_settings()
+    if (not force and not settings["enabled"]) or not settings["to"]:
+        return
+    to_list = [a.strip() for a in settings["to"].split(",") if a.strip()]
+    if not to_list:
+        return
+
+    host = record.get("host", "unknown")
+    category = record.get("category", "")
+    message = record.get("message", "")
+    timestamp = record.get("timestamp", "")
+    ai_summary = record.get("ai_summary")
+
+    subject = f"[SENTINEL CRITICAL] {host} / {category}"
+    text_lines = [
+        f"host: {host}",
+        f"category: {category}",
+        f"time: {timestamp}",
+        "",
+        message,
+    ]
+    if ai_summary:
+        text_lines += ["", f"AI: {ai_summary}"]
+    text = "\n".join(text_lines)
+
+    payload = {"to": to_list, "subject": subject, "text": text}
+    if settings["from_addr"]:
+        payload["from"] = settings["from_addr"]
+
+    try:
+        req = urllib.request.Request(
+            settings["mailman_url"],
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        urllib.request.urlopen(req, timeout=8)
+    except Exception as e:
+        # メール送信の失敗でアラート処理自体を止めない。ローカルログにだけ残す。
+        print(f"[notify] mailmanへのメール送信に失敗: {e}")
 
 
 def _load_suppressions() -> list[dict]:
@@ -234,7 +324,11 @@ def _write_hosts_status(data: dict):
 
 
 @app.post("/api/ingest/alert")
-async def ingest_alert(payload: dict, authorization: str | None = Header(default=None)):
+async def ingest_alert(
+    payload: dict,
+    background_tasks: BackgroundTasks,
+    authorization: str | None = Header(default=None),
+):
     _check_token(authorization)
     record = dict(payload)
     record.setdefault("id", uuid.uuid4().hex)
@@ -249,6 +343,10 @@ async def ingest_alert(payload: dict, authorization: str | None = Header(default
     _apply_suppressions(record)
     _append_alert(record)
     _persist_important(record)
+    # 抑制・ホワイトリストを経てなお最終的にcriticalのままのものだけメール通知する
+    # （レスポンスを待たせないようBackgroundTasksで非同期に送信）
+    if record.get("severity") == "critical":
+        background_tasks.add_task(_send_critical_email, record)
     return {"ok": True, "id": record["id"]}
 
 
@@ -356,6 +454,41 @@ async def api_create_ssh_whitelist(payload: dict):
 async def api_delete_ssh_whitelist(entry_id: str):
     with _db_connect() as conn:
         conn.execute("DELETE FROM ssh_whitelist WHERE id = ?", (entry_id,))
+    return {"ok": True}
+
+
+@app.get("/api/notify-settings")
+def api_get_notify_settings():
+    return _get_notify_settings()
+
+
+@app.post("/api/notify-settings")
+async def api_set_notify_settings(payload: dict):
+    if "enabled" in payload:
+        _set_app_setting("notify_email_enabled", "true" if payload["enabled"] else "false")
+    if "to" in payload:
+        _set_app_setting("notify_email_to", (payload["to"] or "").strip())
+    if "from_addr" in payload:
+        _set_app_setting("notify_email_from", (payload["from_addr"] or "").strip())
+    if "mailman_url" in payload:
+        _set_app_setting("mailman_url", (payload["mailman_url"] or "").strip())
+    return {"ok": True, "settings": _get_notify_settings()}
+
+
+@app.post("/api/notify-settings/test")
+async def api_test_notify_settings():
+    """設定タブから「テスト送信」した際に叩くエンドポイント。実際のアラートを
+    経由せず、mailman連携が正しく動くかその場で確認できるようにする。"""
+    settings = _get_notify_settings()
+    if not settings["to"]:
+        raise HTTPException(status_code=400, detail="宛先メールアドレスが未設定です")
+    _send_critical_email({
+        "host": "sentinel-test",
+        "category": "test",
+        "message": "これはSENTINELからのテスト通知です。この文面が届いていればmailman連携は正常です。",
+        "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
+        "severity": "critical",
+    }, force=True)
     return {"ok": True}
 
 

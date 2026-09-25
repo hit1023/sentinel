@@ -658,7 +658,72 @@ async function loadSuppressions() {
 document.getElementById("openSettingsBtn")?.addEventListener("click", () => {
   document.getElementById("settingsOverlay").style.display = "flex";
   loadSshWhitelist();
+  loadNotifySettings();
 });
+
+document.querySelectorAll(".modal-tab").forEach((tab) => {
+  tab.addEventListener("click", () => {
+    document.querySelectorAll(".modal-tab").forEach((t) => t.classList.remove("active"));
+    document.querySelectorAll(".modal-tab-panel").forEach((p) => { p.style.display = "none"; });
+    tab.classList.add("active");
+    document.getElementById("tab-" + tab.dataset.tab).style.display = "block";
+  });
+});
+
+async function loadNotifySettings() {
+  try {
+    const res = await fetch("/api/notify-settings");
+    const data = await res.json();
+    document.getElementById("notifyEnabled").checked = !!data.enabled;
+    document.getElementById("notifyTo").value = data.to || "";
+    document.getElementById("notifyFrom").value = data.from_addr || "";
+    document.getElementById("notifyMailmanUrl").value = data.mailman_url || "";
+  } catch (e) {
+    console.error("通知設定の取得に失敗", e);
+  }
+}
+
+document.getElementById("saveNotifySettingsBtn")?.addEventListener("click", async () => {
+  const status = document.getElementById("notifySettingsStatus");
+  status.textContent = "保存中…";
+  try {
+    await fetch("/api/notify-settings", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        enabled: document.getElementById("notifyEnabled").checked,
+        to: document.getElementById("notifyTo").value,
+        from_addr: document.getElementById("notifyFrom").value,
+        mailman_url: document.getElementById("notifyMailmanUrl").value,
+      }),
+    });
+    status.textContent = "保存しました";
+  } catch (e) {
+    console.error("通知設定の保存に失敗", e);
+    status.textContent = "保存に失敗しました";
+  } finally {
+    setTimeout(() => { status.textContent = ""; }, 2500);
+  }
+});
+
+document.getElementById("testNotifySettingsBtn")?.addEventListener("click", async () => {
+  const status = document.getElementById("notifySettingsStatus");
+  status.textContent = "送信中…";
+  try {
+    const res = await fetch("/api/notify-settings/test", { method: "POST" });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || "送信失敗");
+    }
+    status.textContent = "テストメールを送信しました";
+  } catch (e) {
+    console.error("テスト送信に失敗", e);
+    status.textContent = `失敗: ${e.message}`;
+  } finally {
+    setTimeout(() => { status.textContent = ""; }, 4000);
+  }
+});
+
 document.getElementById("closeSettingsBtn")?.addEventListener("click", () => {
   document.getElementById("settingsOverlay").style.display = "none";
 });
