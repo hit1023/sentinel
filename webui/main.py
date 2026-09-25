@@ -554,8 +554,26 @@ def api_alerts_history(
 def api_stats():
     alerts = _read_alerts(5000)
     now = time.time()
+    since_epoch = now - 86400
     last_24h = [a for a in alerts if now - a.get("epoch", 0) <= 86400]
-    sev_counter = Counter(a.get("severity", "unknown") for a in last_24h)
+
+    # critical/warningはjsonlの直近5000行だけでは取りこぼす(procnet_watch等の
+    # 大量WARNING/INFOに押し出されて古いCRITICALが集計から漏れる)ため、
+    # 全件を長期保管しているSQLite(alerts_important.db)から正確な件数を取る。
+    # infoはSQLiteに保存していないためjsonl(直近分)のまま。
+    with _db_connect() as conn:
+        sev_rows = conn.execute(
+            "SELECT severity, COUNT(*) as c FROM alerts WHERE epoch >= ? AND severity IN ('critical','warning') GROUP BY severity",
+            (since_epoch,),
+        ).fetchall()
+        heatmap_rows = conn.execute(
+            "SELECT host, epoch, severity FROM alerts WHERE epoch >= ? AND severity IN ('critical','warning')",
+            (since_epoch,),
+        ).fetchall()
+
+    sev_counter = Counter(a.get("severity", "unknown") for a in last_24h if a.get("severity") not in ("critical", "warning"))
+    for row in sev_rows:
+        sev_counter[row["severity"]] = row["c"]
     cat_counter = Counter(a.get("category", "unknown") for a in last_24h)
 
     # 直近24時間を1時間単位のバケットに分け、ホストごとの検知傾向をヒートマップ表示できるようにする
@@ -569,8 +587,15 @@ def api_stats():
         offset = now_hour - int(a.get("epoch", 0) // 3600)
         if 0 <= offset < 24:
             sev = a.get("severity", "info")
-            sev = sev if sev in ("critical", "warning") else "info"
-            hourly_by_host[host][offset][sev] += 1
+            if sev in ("critical", "warning"):
+                continue  # critical/warningはSQLite由来の集計で後段に統一する
+            hourly_by_host[host][offset]["info"] += 1
+    for row in heatmap_rows:
+        host = row["host"] or "unknown"
+        hosts_seen.add(host)
+        offset = now_hour - int(row["epoch"] // 3600)
+        if 0 <= offset < 24:
+            hourly_by_host[host][offset][row["severity"]] += 1
 
     def _build_heatmap_row(host_buckets):
         row = []
@@ -648,7 +673,9 @@ def api_stats():
     return {
         "status": aggregate,
         "hosts": hosts_out,
-        "total_alerts_24h": len(last_24h),
+        # len(last_24h)はjsonlの直近5000行という上限に張り付くことがあるため、
+        # critical/warningがSQLiteベースに直った sev_counter の合計を正とする。
+        "total_alerts_24h": sum(sev_counter.values()),
         "by_severity": dict(sev_counter),
         "by_category": dict(cat_counter),
         "heatmap_by_host": heatmap_by_host,
