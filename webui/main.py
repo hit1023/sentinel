@@ -205,6 +205,55 @@ def api_list_suppressions():
     return {"suppressions": _load_suppressions()}
 
 
+def _reapply_suppressions_to_existing() -> int:
+    """新規ルール登録前に既にjsonlへ書き込み済みのアラートに対しても、
+    現在登録されている抑制ルールを遡って適用する。ルール登録前に届いた
+    アラートは通常ingest時にしか評価されず放置されるため、明示的な
+    再適用手段として用意した（『iwhで除外したい』という要望への対応）。"""
+    if not os.path.exists(ALERTS_JSONL):
+        return 0
+    with open(ALERTS_JSONL, "r", encoding="utf-8") as f:
+        lines = f.readlines()
+
+    updated_ids = []
+    out_lines = []
+    for line in lines:
+        stripped = line.strip()
+        if not stripped:
+            out_lines.append(line)
+            continue
+        try:
+            record = json.loads(stripped)
+        except json.JSONDecodeError:
+            out_lines.append(line)
+            continue
+        if not record.get("suppressed") and not record.get("ai_dismissed"):
+            before = record.get("severity")
+            _apply_suppressions(record)
+            if record.get("severity") != before:
+                updated_ids.append(record.get("id"))
+        out_lines.append(json.dumps(record, ensure_ascii=False) + "\n")
+
+    tmp_path = ALERTS_JSONL + ".tmp"
+    with open(tmp_path, "w", encoding="utf-8") as f:
+        f.writelines(out_lines)
+    os.replace(tmp_path, ALERTS_JSONL)
+
+    if updated_ids:
+        with _db_connect() as conn:
+            conn.executemany(
+                "UPDATE alerts SET severity = 'info' WHERE id = ?",
+                [(i,) for i in updated_ids],
+            )
+    return len(updated_ids)
+
+
+@app.post("/api/suppressions/reapply")
+def api_reapply_suppressions():
+    updated = _reapply_suppressions_to_existing()
+    return {"ok": True, "updated": updated}
+
+
 @app.post("/api/suppressions")
 async def api_create_suppression(payload: dict):
     # ダッシュボード(ブラウザ)から直接叩くエンドポイントなので、

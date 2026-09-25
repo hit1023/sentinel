@@ -183,6 +183,11 @@ AIの判定に頼らず、**人間が「これは脅威ではない」と一度�
   一致したアラートは強制的にINFOへ格下げする（`suppressed: true`、`original_severity`は
   保持するので監査ログからは追える）
 - サイドパネルの「SUPPRESSION RULES」で登録済みルールの一覧・削除ができる
+- **ルール登録は将来のingestにしか効かない**（`/api/ingest/alert`受信時にその場で
+  評価するだけなので、登録前に既にjsonlへ書き込み済みの過去アラートは対象外）。
+  過去分にも遡って適用したい場合は「既存にも適用」ボタン
+  （`POST /api/suppressions/reapply`）で、現在登録中の全ルールを`alerts.jsonl`の
+  既存レコードに再評価・書き戻しできる
 - 実装は`webui/main.py`の`_apply_suppressions()`。**WebUI側だけで完結する**ため、
   エージェント側の再デプロイは不要（AIトリアージ自体は引き続きagent側で実行されるので
   Cloudflareへの呼び出し自体は減らない点に注意。呼び出し自体を減らしたい場合は

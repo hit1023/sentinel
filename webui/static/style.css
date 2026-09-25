@@ -647,6 +647,19 @@ body.alert-critical .topbar {
 .suppression-del { cursor: pointer; color: var(--text-dim); flex-shrink: 0; }
 .suppression-del:hover { color: var(--neon-red); }
 
+.mini-btn {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  background: rgba(36,240,255,0.08);
+  border: 1px solid rgba(36,240,255,0.35);
+  color: var(--neon-cyan);
+  cursor: pointer;
+}
+.mini-btn:hover { border-color: var(--neon-cyan); background: rgba(36,240,255,0.16); }
+
 .feed-line.critical { border-left-color: var(--neon-red); }
 .feed-line.critical .sev-icon { color: var(--neon-red); text-shadow: 0 0 6px var(--neon-red); }
 .feed-line.critical .cat { border-color: rgba(255,56,96,0.4); color: var(--neon-red); background: rgba(255,56,96,0.08); }

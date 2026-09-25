@@ -509,6 +509,24 @@ async function loadSuppressions() {
   }
 }
 
+document.getElementById("reapplySuppressionsBtn")?.addEventListener("click", async (e) => {
+  const btn = e.target;
+  const original = btn.textContent;
+  btn.textContent = "適用中…";
+  try {
+    const res = await fetch("/api/suppressions/reapply", { method: "POST" });
+    const data = await res.json();
+    btn.textContent = `${data.updated ?? 0}件更新`;
+    loadInitialAlerts();
+    loadStats();
+  } catch (err) {
+    console.error("既存アラートへの再適用に失敗", err);
+    btn.textContent = "失敗";
+  } finally {
+    setTimeout(() => { btn.textContent = original; }, 2000);
+  }
+});
+
 initStatCardFilters();
 loadInitialAlerts();
 connectWs();
