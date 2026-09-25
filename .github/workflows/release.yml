@@ -21,8 +21,9 @@ jobs:
             artifact_name: sentinel-agent-linux-x86_64
           - os: macos-latest       # Apple Silicon (arm64) ランナー
             artifact_name: sentinel-agent-macos-arm64
-          - os: macos-13           # Intel (x86_64) ランナー
-            artifact_name: sentinel-agent-macos-x86_64
+          # Intel Mac(x86_64)向けのmacos-13ランナーはGitHub側の縮小に伴い
+          # キューが極端に混雑することがあるため一旦見送り。必要になったら
+          # `- os: macos-13` / `artifact_name: sentinel-agent-macos-x86_64` を追加する。
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4

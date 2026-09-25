@@ -1,3 +1,5 @@
+<p align="center"><img src="docs/img/eye-blink.gif" width="120" alt="SENTINEL eye logo"></p>
+
 # SENTINEL
 
 マルチホスト対応のホスト型IDS（侵入検知システム）。**マネージャー/エージェント構成**で、
@@ -171,6 +173,8 @@ hit-linux-ids/
 
 ## AIトリアージ（Cloudflare AI Gateway）
 
+![AIトリアージのフロー](docs/img/triage-flow.png)
+
 CRITICAL/WARNINGアラート発生時、`app/notify.py`の`Notifier.alert()`が
 `app/ai_triage.py`の`triage()`を呼び出し、生ログをWorkers AI（Cloudflare AI Gateway
 経由）に渡して以下を行わせる:
@@ -294,6 +298,10 @@ CRITICALアラート（抑制ルール・SSH許可リストを経てなお最終
 
 ## WebUI（ダッシュボード）
 
+![SENTINEL ダッシュボードのイメージ](docs/img/dashboard.png)
+
+*上記はダッシュボードの構成を再現したイメージ図（実データではない）。*
+
 サイバーパンク風の演出:
 
 - 動くパーティクルネットワーク背景（`netbg.js`、canvas自作、外部ライブラリ不使用）
@@ -379,7 +387,7 @@ curl -fsSL https://raw.githubusercontent.com/hit1023/sentinel/main/install-macos
 sudo bash install-macos.sh --webui-url http://<マネージャーのアドレス>:8877 --token <共有トークン> --host-label <このホストの表示名>
 ```
 
-- 対応OS/アーキテクチャ: Linux(x86_64)、macOS(Apple Silicon/Intel両対応)。Windowsは今後の課題。
+- 対応OS/アーキテクチャ: Linux(x86_64)、macOS(Apple Silicon)。Intel Mac・Windowsは今後の課題。
 - 設定ファイルは`/etc/sentinel/config.yaml`、環境変数は`/etc/sentinel/env`、
   永続化データは`/var/lib/sentinel`に配置される。
 - `--version v0.2.0`のように特定バージョンを指定してインストール可能（既定は`latest`）。
@@ -435,7 +443,7 @@ cd hit-linux-ids
 ## エージェントのバージョニング・配布
 
 エージェントは`app/VERSION`でバージョン管理されており、タグをpushすると
-GitHub Actions（`.github/workflows/release.yml`）がLinux/macOS(arm64/x86_64)向けの
+GitHub Actions（`.github/workflows/release.yml`）がLinux(x86_64)/macOS(Apple Silicon)向けの
 単一バイナリを自動ビルドし、GitHub Releasesに公開する。
 
 新しいバージョンをリリースする手順:
