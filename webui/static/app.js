@@ -314,6 +314,7 @@ const SPARK_COLORS = {
   total: ["#39ff8a", "rgba(57,255,138,0.08)"],
   proc: ["#24f0ff", "rgba(36,240,255,0.08)"],
   ports: ["#24f0ff", "rgba(36,240,255,0.08)"],
+  mem: ["#ff5fd8", "rgba(255,95,216,0.08)"],
 };
 
 function pushSparkValue(key, value) {
@@ -341,7 +342,10 @@ function drawSparkline(key) {
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.clearRect(0, 0, cssW, cssH);
 
-  const [lineColor, fillColor] = SPARK_COLORS[key] || SPARK_COLORS.info;
+  let colorKey = key;
+  if (key.startsWith("hostmem_")) colorKey = "mem";
+  else if (key.startsWith("host_")) colorKey = "info";
+  const [lineColor, fillColor] = SPARK_COLORS[colorKey] || SPARK_COLORS.info;
   const max = Math.max(1, ...values);
   const barGap = 2;
   const barWidth = Math.max(2, cssW / SPARK_MAX_POINTS - barGap);
@@ -369,99 +373,6 @@ function drawSparkline(key) {
   });
 }
 
-// --- HOST CPU 波形チャート ---
-const CPU_WAVE_MAX_POINTS = 60;
-const cpuHistory = [];
-const cpuWaveCanvas = document.getElementById("cpuWave");
-
-function pushCpuValue(value) {
-  cpuHistory.push(value);
-  while (cpuHistory.length > CPU_WAVE_MAX_POINTS) cpuHistory.shift();
-  drawCpuWave();
-}
-
-function drawCpuWave() {
-  if (!cpuWaveCanvas || cpuHistory.length < 2) return;
-  const dpr = window.devicePixelRatio || 1;
-  const cssW = cpuWaveCanvas.clientWidth || 600;
-  const cssH = cpuWaveCanvas.clientHeight || 140;
-  if (cpuWaveCanvas.width !== cssW * dpr || cpuWaveCanvas.height !== cssH * dpr) {
-    cpuWaveCanvas.width = cssW * dpr;
-    cpuWaveCanvas.height = cssH * dpr;
-  }
-  const ctx = cpuWaveCanvas.getContext("2d");
-  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  ctx.clearRect(0, 0, cssW, cssH);
-
-  const padTop = 10;
-  const padBottom = 10;
-  const usableH = cssH - padTop - padBottom;
-  const max = 100; // CPU%は0-100固定スケールで波形の暴れを安定させる
-  const stepX = cssW / (CPU_WAVE_MAX_POINTS - 1);
-  const offsetIdx = CPU_WAVE_MAX_POINTS - cpuHistory.length;
-
-  // 横方向のグリッド線（25/50/75%）
-  ctx.strokeStyle = "rgba(36,240,255,0.08)";
-  ctx.lineWidth = 1;
-  [0.25, 0.5, 0.75].forEach((f) => {
-    const y = padTop + usableH * (1 - f);
-    ctx.beginPath();
-    ctx.moveTo(0, y);
-    ctx.lineTo(cssW, y);
-    ctx.stroke();
-  });
-
-  const points = cpuHistory.map((v, i) => {
-    const x = (offsetIdx + i) * stepX;
-    const y = padTop + usableH * (1 - Math.min(v, max) / max);
-    return [x, y];
-  });
-
-  // 塗りつぶし（グラデーション、波の下側）
-  ctx.beginPath();
-  ctx.moveTo(points[0][0], cssH - padBottom);
-  points.forEach(([x, y], i) => {
-    if (i === 0) { ctx.lineTo(x, y); return; }
-    const [px, py] = points[i - 1];
-    const midX = (px + x) / 2;
-    ctx.bezierCurveTo(midX, py, midX, y, x, y);
-  });
-  ctx.lineTo(points[points.length - 1][0], cssH - padBottom);
-  ctx.closePath();
-  const grad = ctx.createLinearGradient(0, padTop, 0, cssH - padBottom);
-  grad.addColorStop(0, "rgba(57,255,138,0.35)");
-  grad.addColorStop(1, "rgba(57,255,138,0.02)");
-  ctx.fillStyle = grad;
-  ctx.fill();
-
-  // 波形の線
-  ctx.beginPath();
-  points.forEach(([x, y], i) => {
-    if (i === 0) { ctx.moveTo(x, y); return; }
-    const [px, py] = points[i - 1];
-    const midX = (px + x) / 2;
-    ctx.bezierCurveTo(midX, py, midX, y, x, y);
-  });
-  ctx.strokeStyle = "#39ff8a";
-  ctx.lineWidth = 2;
-  ctx.shadowColor = "#39ff8a";
-  ctx.shadowBlur = 8;
-  ctx.stroke();
-  ctx.shadowBlur = 0;
-
-  // 現在値の光点
-  const [lastX, lastY] = points[points.length - 1];
-  ctx.beginPath();
-  ctx.arc(lastX, lastY, 3.5, 0, Math.PI * 2);
-  ctx.fillStyle = "#eafffb";
-  ctx.shadowColor = "#39ff8a";
-  ctx.shadowBlur = 10;
-  ctx.fill();
-  ctx.shadowBlur = 0;
-}
-
-window.addEventListener("resize", () => drawCpuWave());
-
 async function loadStats() {
   try {
     const res = await fetch("/api/stats");
@@ -486,9 +397,6 @@ async function loadStats() {
     document.getElementById("statPorts").textContent = st.listen_port_count ?? "--";
     pushSparkValue("proc", st.process_count ?? 0);
     pushSparkValue("ports", st.listen_port_count ?? 0);
-    const cpu = st.cpu_percent;
-    pushCpuValue(cpu ?? 0);
-    document.getElementById("statCpuBig").textContent = cpu != null ? cpu.toFixed(0) + "%" : "--%";
 
     if (st.updated_at) {
       const d = new Date(st.updated_at * 1000);
@@ -521,20 +429,30 @@ function renderHostsList(hosts) {
       <span class="host-dot ${h.online ? "dot-on" : "dot-off"}"></span>
       <span class="host-name">${escapeHtml(h.host || "unknown")}</span>
       <span class="host-metric">CPU ${cpu}</span>
+      <canvas class="host-spark" width="70" height="22" title="CPU推移"></canvas>
       <span class="host-metric">MEM ${mem}</span>
-      <canvas class="host-spark" width="90" height="24"></canvas>
+      <canvas class="host-spark" width="70" height="22" title="MEM推移"></canvas>
     `;
     container.appendChild(row);
 
-    // ホスト別のCPU推移をミニスパークラインで表示（履歴自体はhostCpuHistoryに
-    // 保持し続け、行を再描画するたびに新しいcanvas要素へ紐付け直して復元する）
-    const key = "host_" + (h.host || "unknown");
-    sparkCanvases[key] = row.querySelector(".host-spark");
-    if (!sparkHistory[key]) sparkHistory[key] = [];
+    // ホスト別のCPU/MEM推移をミニスパークラインで表示（履歴自体はsparkHistoryに
+    // キーごとに保持し続け、行を再描画するたびに新しいcanvas要素へ紐付け直して復元する）
+    const sparkCanvasEls = row.querySelectorAll(".host-spark");
+    const cpuKey = "host_" + (h.host || "unknown");
+    const memKey = "hostmem_" + (h.host || "unknown");
+    sparkCanvases[cpuKey] = sparkCanvasEls[0];
+    sparkCanvases[memKey] = sparkCanvasEls[1];
+    if (!sparkHistory[cpuKey]) sparkHistory[cpuKey] = [];
+    if (!sparkHistory[memKey]) sparkHistory[memKey] = [];
     if (h.cpu_percent != null) {
-      pushSparkValue(key, h.cpu_percent);
+      pushSparkValue(cpuKey, h.cpu_percent);
     } else {
-      drawSparkline(key);
+      drawSparkline(cpuKey);
+    }
+    if (h.mem_percent != null) {
+      pushSparkValue(memKey, h.mem_percent);
+    } else {
+      drawSparkline(memKey);
     }
   }
 }

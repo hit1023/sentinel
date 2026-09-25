@@ -104,26 +104,23 @@
 
   <section class="mid-grid">
 
-    <div class="panel cpu-panel">
-      <div class="panel-head"><span>FLEET CPU WAVEFORM（全ホスト平均）</span><span class="stat-value cpu-panel-value" id="statCpuBig">--%</span></div>
-      <canvas class="wave" id="cpuWave" width="600" height="120"></canvas>
-    </div>
-
     <div class="panel side-panel">
       <div class="panel-head"><span>CATEGORY BREAKDOWN (24H)</span></div>
       <div class="bars" id="categoryBars"></div>
-
-      <div class="panel-head" style="margin-top:20px;"><span>HOSTS</span></div>
-      <div class="hosts-list" id="hostsList">
-        <div class="mono-dim">ホストからの報告待ち…</div>
-      </div>
-      <div class="sysline" style="margin-top:14px;">LAST UPDATE (ANY HOST)</div>
-      <div class="mono-dim" id="lastUpdate">--</div>
 
       <div class="panel-head" style="margin-top:20px;"><span>SUPPRESSION RULES（誤検知として除外中）</span></div>
       <div class="hosts-list" id="suppressionList">
         <div class="mono-dim">読み込み中…</div>
       </div>
+    </div>
+
+    <div class="panel side-panel">
+      <div class="panel-head"><span>HOSTS</span></div>
+      <div class="hosts-list" id="hostsList">
+        <div class="mono-dim">ホストからの報告待ち…</div>
+      </div>
+      <div class="sysline" style="margin-top:14px;">LAST UPDATE (ANY HOST)</div>
+      <div class="mono-dim" id="lastUpdate">--</div>
     </div>
 
   </section>
