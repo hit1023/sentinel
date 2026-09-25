@@ -11,6 +11,11 @@ on:
     tags:
       - 'v*'
 
+# GITHUB_TOKENの既定権限がread-onlyのリポジトリでもGitHub Releaseを
+# 作成できるよう、書き込み権限を明示的に付与する。
+permissions:
+  contents: write
+
 jobs:
   build:
     strategy:
