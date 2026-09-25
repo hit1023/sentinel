@@ -610,6 +610,69 @@ async function loadSuppressions() {
   }
 }
 
+// --- 設定モーダル / SSH許可リスト ---
+document.getElementById("openSettingsBtn")?.addEventListener("click", () => {
+  document.getElementById("settingsOverlay").style.display = "flex";
+  loadSshWhitelist();
+});
+document.getElementById("closeSettingsBtn")?.addEventListener("click", () => {
+  document.getElementById("settingsOverlay").style.display = "none";
+});
+document.getElementById("settingsOverlay")?.addEventListener("click", (e) => {
+  if (e.target.id === "settingsOverlay") e.target.style.display = "none";
+});
+
+async function loadSshWhitelist() {
+  const container = document.getElementById("sshWhitelistList");
+  if (!container) return;
+  try {
+    const res = await fetch("/api/ssh-whitelist");
+    const data = await res.json();
+    const entries = data.whitelist || [];
+    if (!entries.length) {
+      container.innerHTML = '<div class="mono-dim">登録された許可リストはありません</div>';
+      return;
+    }
+    container.innerHTML = "";
+    for (const item of entries) {
+      const row = document.createElement("div");
+      row.className = "whitelist-row";
+      row.innerHTML = `
+        <span class="entry">${escapeHtml(item.entry)}</span>
+        <span class="label">${escapeHtml(item.label || "")}</span>
+        <span class="del" title="削除">✕</span>
+      `;
+      row.querySelector(".del").addEventListener("click", async () => {
+        await fetch(`/api/ssh-whitelist/${item.id}`, { method: "DELETE" });
+        loadSshWhitelist();
+      });
+      container.appendChild(row);
+    }
+  } catch (e) {
+    console.error("SSH許可リスト取得に失敗", e);
+  }
+}
+
+document.getElementById("addSshWhitelistBtn")?.addEventListener("click", async () => {
+  const entryInput = document.getElementById("sshWhitelistEntry");
+  const labelInput = document.getElementById("sshWhitelistLabel");
+  const entry = entryInput.value.trim();
+  if (!entry) return;
+  try {
+    await fetch("/api/ssh-whitelist", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ entry, label: labelInput.value.trim() }),
+    });
+    entryInput.value = "";
+    labelInput.value = "";
+    loadSshWhitelist();
+  } catch (e) {
+    console.error("SSH許可リスト登録に失敗", e);
+    alert("登録に失敗しました");
+  }
+});
+
 document.getElementById("reapplySuppressionsBtn")?.addEventListener("click", async (e) => {
   const btn = e.target;
   const original = btn.textContent;

@@ -55,9 +55,35 @@
     <span id="connDot" class="dot dot-off"></span>
     <span id="connLabel">CONNECTING…</span>
     <span class="clock" id="clock">--:--:--</span>
+    <span class="mini-btn" id="openSettingsBtn" title="設定">⚙ 設定</span>
     <div class="radar" title="scanning…"></div>
   </div>
 </header>
+
+<div class="modal-overlay" id="settingsOverlay" style="display:none;">
+  <div class="modal-panel">
+    <div class="modal-head">
+      <span>⚙ 設定</span>
+      <span class="modal-close" id="closeSettingsBtn">✕</span>
+    </div>
+    <div class="modal-body">
+      <div class="panel-head"><span>🔐 SSH 許可リスト（ホワイトリスト）</span></div>
+      <p class="mono-dim" style="margin:0 0 12px;">
+        自宅・オフィス等、いつもSSHでログインするIP/CIDR、または国名を登録しておくと、
+        「見慣れない国からのログイン」CRITICAL判定を含め、auth_watchのアラートが
+        自動的にINFO扱いになります（例: 203.0.113.10 / 203.0.113.0/24 / 日本）
+      </p>
+      <div class="settings-add-row">
+        <input type="text" id="sshWhitelistEntry" placeholder="IP / CIDR / 国名（例: 203.0.113.0/24、日本）">
+        <input type="text" id="sshWhitelistLabel" placeholder="ラベル（任意、例: 自宅）">
+        <span class="mini-btn" id="addSshWhitelistBtn">追加</span>
+      </div>
+      <div class="hosts-list" id="sshWhitelistList">
+        <div class="mono-dim">読み込み中…</div>
+      </div>
+    </div>
+  </div>
+</div>
 
 <main class="layout">
 

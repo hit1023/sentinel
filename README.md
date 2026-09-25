@@ -216,6 +216,23 @@ AIの判定に頼らず、**人間が「これは脅威ではない」と一度�
   Cloudflareへの呼び出し自体は減らない点に注意。呼び出し自体を減らしたい場合は
   `config.yaml`の`known_process_keywords`等の恒久的なホワイトリストで対応する）
 
+### 設定タブ / SSH許可リスト（ホワイトリスト）
+
+ヘッダー右上の「⚙ 設定」ボタンからモーダルを開くと、SSH（auth_watch）専用の
+許可リストを管理できる。汎用的なSUPPRESSION RULESとは別枠で、以下の2種類を登録できる:
+
+- **IP / CIDR**（例: `203.0.113.10`、`203.0.113.0/24`） — メッセージ中の`from=IP`を
+  Pythonの`ipaddress`モジュールで正しくネットワーク判定する（CIDR範囲にも対応）
+- **国名**（例: `日本`） — GeoIPで解決された`location=国/都市 (ドメイン)`部分への
+  文字列一致
+
+登録した内容にマッチしたauth_watchアラートは、**「いつもと異なるロケーションからの
+ログイン成功」のCRITICAL判定を含めて**強制的にINFOへ格下げされる（一般の
+SUPPRESSION RULESと同じ`suppressed`フラグを使うため、SUPPRESSION RULESパネルの
+「既存にも適用」ボタンでこちらも過去アラートに遡って適用できる）。
+実装は`webui/main.py`の`_apply_ssh_whitelist()`、テーブルは`ssh_whitelist`
+（`GET/POST /api/ssh-whitelist`、`DELETE /api/ssh-whitelist/{id}`）。
+
 ### セットアップ手順
 
 1. Cloudflareダッシュボード → AI → **AI Gateway** で新規Gatewayを作成

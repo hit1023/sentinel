@@ -1,6 +1,7 @@
 """hit-linux-ids WebUI: 複数ホストのエージェントから /api/ingest 経由で
 届くアラート・状態スナップショットを集約し、REST + WebSocketで配信する司令塔。"""
 import asyncio
+import ipaddress
 import json
 import os
 import re
@@ -71,6 +72,16 @@ def _init_db():
             )
             """
         )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS ssh_whitelist (
+                id TEXT PRIMARY KEY,
+                entry TEXT NOT NULL,
+                label TEXT,
+                created_at REAL NOT NULL
+            )
+            """
+        )
 
 
 _init_db()
@@ -104,6 +115,40 @@ def _apply_suppressions(record: dict):
             record["severity"] = "info"
             record["suppressed"] = True
             record["suppression_pattern"] = rule["pattern"]
+            return
+
+
+def _load_ssh_whitelist() -> list[dict]:
+    with _db_connect() as conn:
+        rows = conn.execute("SELECT * FROM ssh_whitelist ORDER BY created_at DESC").fetchall()
+    return [dict(r) for r in rows]
+
+
+def _matches_ssh_whitelist(record: dict, entry: str) -> bool:
+    """entryはIP単体・CIDR(例: 203.0.113.0/24)・国名のいずれか。
+    IP/CIDRとして解釈できればメッセージ中のfrom=IPと照合し、できなければ
+    location=国/都市(ドメイン) の部分文字列一致として扱う（国名でのホワイトリスト用）。"""
+    message = record.get("message") or ""
+    m = AUTH_IP_RE.search(message)
+    ip = (m.group(1) or m.group(2)) if m else None
+    try:
+        network = ipaddress.ip_network(entry, strict=False)
+        return ip is not None and ipaddress.ip_address(ip) in network
+    except ValueError:
+        return entry.strip().lower() in message.lower()
+
+
+def _apply_ssh_whitelist(record: dict):
+    """auth_watchのアラートのうち、登録済みのSSH許可リスト(IP/CIDR/国名)に一致する
+    ものは、見慣れない国からのログイン等のCRITICAL判定も含めて確実にINFOへ格下げする。"""
+    if record.get("category") != "auth_watch":
+        return
+    for entry in _load_ssh_whitelist():
+        if _matches_ssh_whitelist(record, entry["entry"]):
+            record.setdefault("original_severity", record.get("severity", "unknown"))
+            record["severity"] = "info"
+            record["suppressed"] = True
+            record["suppression_pattern"] = f"SSH許可リスト: {entry['entry']}"
             return
 
 
@@ -198,8 +243,9 @@ async def ingest_alert(payload: dict, authorization: str | None = Header(default
     record.setdefault("epoch", now)
     if "timestamp" not in record:
         record["timestamp"] = time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(record["epoch"]))
-    # AIの判定より先に、ユーザー登録の抑制ルールを適用する
+    # AIの判定より先に、ユーザー登録の抑制ルール・SSH許可リストを適用する
     # （「これは脅威ではない」と一度教えたものはAIの結果を待たず確実に黙らせる）
+    _apply_ssh_whitelist(record)
     _apply_suppressions(record)
     _append_alert(record)
     _persist_important(record)
@@ -235,6 +281,7 @@ def _reapply_suppressions_to_existing() -> int:
             continue
         if not record.get("suppressed") and not record.get("ai_dismissed"):
             before = record.get("severity")
+            _apply_ssh_whitelist(record)
             _apply_suppressions(record)
             if record.get("severity") != before:
                 updated_ids.append(record.get("id"))
@@ -282,6 +329,33 @@ async def api_create_suppression(payload: dict):
 async def api_delete_suppression(rule_id: str):
     with _db_connect() as conn:
         conn.execute("DELETE FROM suppressions WHERE id = ?", (rule_id,))
+    return {"ok": True}
+
+
+@app.get("/api/ssh-whitelist")
+def api_list_ssh_whitelist():
+    return {"whitelist": _load_ssh_whitelist()}
+
+
+@app.post("/api/ssh-whitelist")
+async def api_create_ssh_whitelist(payload: dict):
+    entry = (payload.get("entry") or "").strip()
+    label = (payload.get("label") or "").strip()
+    if not entry:
+        raise HTTPException(status_code=400, detail="entry is required")
+    entry_id = uuid.uuid4().hex
+    with _db_connect() as conn:
+        conn.execute(
+            "INSERT INTO ssh_whitelist (id, entry, label, created_at) VALUES (?, ?, ?, ?)",
+            (entry_id, entry, label, time.time()),
+        )
+    return {"ok": True, "id": entry_id}
+
+
+@app.delete("/api/ssh-whitelist/{entry_id}")
+async def api_delete_ssh_whitelist(entry_id: str):
+    with _db_connect() as conn:
+        conn.execute("DELETE FROM ssh_whitelist WHERE id = ?", (entry_id,))
     return {"ok": True}
 
 

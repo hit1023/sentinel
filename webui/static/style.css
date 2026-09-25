@@ -699,6 +699,72 @@ body.alert-critical .topbar {
 }
 .mini-btn:hover { border-color: var(--neon-cyan); background: rgba(36,240,255,0.16); }
 
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  background: rgba(2,6,10,0.75);
+  backdrop-filter: blur(2px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.modal-panel {
+  width: min(640px, 92vw);
+  max-height: 80vh;
+  overflow-y: auto;
+  background: var(--bg-panel);
+  border: 1px solid var(--neon-cyan);
+  border-radius: 10px;
+  box-shadow: 0 0 40px rgba(36,240,255,0.2);
+}
+.modal-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--border);
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  color: var(--neon-cyan);
+}
+.modal-close { cursor: pointer; opacity: 0.7; }
+.modal-close:hover { opacity: 1; color: var(--neon-red); }
+.modal-body { padding: 18px; }
+
+.settings-add-row {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+.settings-add-row input {
+  flex: 1;
+  background: rgba(255,255,255,0.03);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 7px 10px;
+  color: #d7f6ff;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+}
+.settings-add-row input:focus { outline: none; border-color: var(--neon-cyan); }
+
+.whitelist-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 4px;
+  background: rgba(255,255,255,0.02);
+  border: 1px solid rgba(255,255,255,0.06);
+  font-size: 12px;
+}
+.whitelist-row .entry { color: #d7f6ff; font-weight: 700; }
+.whitelist-row .label { flex: 1; color: var(--text-dim); }
+.whitelist-row .del { cursor: pointer; color: var(--text-dim); flex-shrink: 0; }
+.whitelist-row .del:hover { color: var(--neon-red); }
+
 .feed-line.critical { border-left-color: var(--neon-red); }
 .feed-line.critical .sev-icon { color: var(--neon-red); text-shadow: 0 0 6px var(--neon-red); }
 .feed-line.critical .cat { border-color: rgba(255,56,96,0.4); color: var(--neon-red); background: rgba(255,56,96,0.08); }
