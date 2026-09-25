@@ -1,5 +1,6 @@
 """簡易ファイル整合性監視（AIDE風）。指定パス配下のハッシュを取り、変更/追加/削除を検知する"""
 import fnmatch
+import glob
 import hashlib
 import json
 import os
@@ -26,13 +27,26 @@ class IntegrityWatcher:
         self.watch_paths = config.get("watch_paths", [])
         self.exclude_patterns = config.get("exclude_patterns", [])
         self.baseline_path = config.get("baseline_path", "/data/integrity_baseline.json")
+        # ここに一致するパスは、新規作成・削除であっても（通常はwarning止まりのところ）
+        # 即座にcriticalとして扱う。SSH公開鍵はroot以外の全ユーザー分を対象にしたいので
+        # watch_paths側はglobパターン（例: /hostfs/home/*/.ssh）にも対応させている
+        self.critical_patterns = config.get("critical_patterns", ["*/.ssh/*"])
 
     def _is_excluded(self, path):
         return any(fnmatch.fnmatch(path, pat) for pat in self.exclude_patterns)
 
+    def _is_critical_path(self, path):
+        return any(fnmatch.fnmatch(path, pat) for pat in self.critical_patterns)
+
     def _scan(self):
         result = {}
-        for base in self.watch_paths:
+        expanded_bases = []
+        for pattern in self.watch_paths:
+            if any(ch in pattern for ch in "*?["):
+                expanded_bases.extend(glob.glob(pattern))
+            else:
+                expanded_bases.append(pattern)
+        for base in expanded_bases:
             if not os.path.exists(base):
                 continue
             if os.path.isfile(base):
@@ -86,17 +100,38 @@ class IntegrityWatcher:
         cur_paths = set(current.keys())
 
         for path in sorted(cur_paths - base_paths):
-            self.notifier.alert("integrity_watch", f"新規ファイルを検知: {path}", "warning")
+            if self._is_critical_path(path):
+                self.notifier.alert(
+                    "integrity_watch",
+                    f"SSH関連ファイルの新規作成を検知（不正な鍵の追加の可能性）: {path}",
+                    "critical",
+                )
+            else:
+                self.notifier.alert("integrity_watch", f"新規ファイルを検知: {path}", "warning")
 
         for path in sorted(base_paths - cur_paths):
-            self.notifier.alert("integrity_watch", f"ファイルの削除を検知: {path}", "warning")
+            if self._is_critical_path(path):
+                self.notifier.alert(
+                    "integrity_watch",
+                    f"SSH関連ファイルの削除を検知: {path}",
+                    "critical",
+                )
+            else:
+                self.notifier.alert("integrity_watch", f"ファイルの削除を検知: {path}", "warning")
 
         for path in sorted(cur_paths & base_paths):
             if current[path]["hash"] != baseline[path]["hash"]:
-                self.notifier.alert(
-                    "integrity_watch",
-                    f"ファイル改ざんの疑い（ハッシュ不一致）: {path}",
-                    "critical",
-                )
+                if self._is_critical_path(path):
+                    self.notifier.alert(
+                        "integrity_watch",
+                        f"SSH公開鍵ファイルの変更を検知（不正な鍵の追加/改ざんの可能性）: {path}",
+                        "critical",
+                    )
+                else:
+                    self.notifier.alert(
+                        "integrity_watch",
+                        f"ファイル改ざんの疑い（ハッシュ不一致）: {path}",
+                        "critical",
+                    )
 
         self._save_baseline(current)

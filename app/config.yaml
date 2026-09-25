@@ -50,9 +50,11 @@ auth_watch:
 integrity_watch:
   enabled: true
   # 監視対象パス（コンテナ内からは /hostfs 配下にマッピングされる）
+  # globパターン（*/?/[]）も使用可（例: /hostfs/home/*/.ssh でroot以外の全ユーザーを対象化）
   watch_paths:
     - /hostfs/etc
     - /hostfs/root/.ssh
+    - /hostfs/home/*/.ssh
     - /hostfs/etc/nginx
     - /hostfs/etc/docker
   # 除外パターン（fnmatch形式、フルパスに対して判定）
@@ -64,8 +66,35 @@ integrity_watch:
     - "*.tmp"
     # CUPSが印刷購読の状態管理のため頻繁に書き換える運用ファイル（改ざんではない）
     - "*/cups/subscriptions.conf*"
+  # ここに一致するパスは、新規作成・削除であっても（通常はwarning止まりのところ）
+  # 即座にcriticalとして扱う。SSH公開鍵は不正ログインの前兆として特に重大なため。
+  critical_patterns:
+    - "*/.ssh/*"
   # ベースライン（初回スキャン結果）の保存先。既存があれば差分検知、なければ新規作成のみ。
   baseline_path: /data/integrity_baseline.json
+
+# --- 外向き通信の異常検知 ---
+# LAN内(プライベートIP)への通信は監視対象外。それ以外の宛先への確立済み通信のうち、
+# 既知ポート以外・既知の攻撃ツールが使うポートへの通信を検知する。
+outbound_watch:
+  enabled: true
+  # このポートへの外向き通信は正常とみなし、通知しない（Web/DNS/NTP/SSH/DoH等）
+  known_outbound_ports:
+    - 80
+    - 443
+    - 53
+    - 123   # NTP
+    - 22    # SSH（他ホストへの踏み台的アクセス等、正規利用も多いため既定で許可）
+    - 853   # DNS over TLS
+  # 既知の攻撃ツール・C2フレームワークがよく使うポート。検知したら閾値なしで即CRITICAL。
+  suspicious_ports:
+    - 4444   # Metasploit既定
+    - 1337
+    - 6666
+    - 6667   # IRC (ボットネットC2の定番)
+    - 31337
+    - 12345
+    - 54321
 
 # --- プロセス／ネットワーク異常検知 ---
 procnet_watch:

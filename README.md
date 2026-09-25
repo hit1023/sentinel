@@ -138,6 +138,19 @@ hit-linux-ids/
    - `known_listen_ports`以外での新規LISTENを通知
    - 高CPU使用率のプロセスを通知（`cpu_alert_percent`、既定90%）
    - **CPU%計測には要注意の実装ノートあり**（後述「教訓」節）
+4. **外向き通信の異常検知**（`app/outbound_watch.py`）
+   - LAN内（プライベートIP）への通信は対象外。それ以外への確立済み接続のうち、
+     `known_outbound_ports`（80/443/53/123/22/853）以外のポートへの通信をWARNINGで通知
+   - `suspicious_ports`（Metasploit既定の4444、IRC C2の6667等）への通信は
+     閾値なしで即CRITICAL
+   - 一度アラートした宛先(ip, port)は以後黙る永続dedup方式（procnet_watchの
+     未登録ポート検知と同じ設計）
+5. **SSH公開鍵の変更検知**（`app/integrity.py`の拡張、独立watcherではない）
+   - `integrity_watch.critical_patterns`（既定`*/.ssh/*`）に一致するパスは、
+     通常は新規作成/削除がWARNING止まりのところ、**新規作成・削除・改ざんの
+     いずれでも即CRITICAL**として扱う
+   - `watch_paths`はglobパターンに対応（`/hostfs/home/*/.ssh`で、rootだけでなく
+     全ユーザーのSSH鍵を対象化できる）
 
 いずれも`Notifier.alert(category, message, severity)`を呼ぶだけの単純なインターフェースで、
 新しい検知器を追加する場合はこのメソッドを呼ぶWatcherクラスを1つ書いて`app/main.py`の
@@ -401,10 +414,13 @@ skip-worktreeにしている場合は`git pull`が安全）。
 | `auth_watch.notify_on_success` | true | ログイン成功も通知するか |
 | `auth_watch.use_journalctl` | false | trueならjournalctl方式（journalマウントも要有効化） |
 | `auth_watch.sensitive_users` | root, admin, administrator, ubuntu | これらのユーザーへの失敗ログインは閾値未満でも即WARNING |
-| `integrity_watch.watch_paths` | `/etc`, `/root/.ssh`等 | 整合性監視対象（コンテナ内は`/hostfs`配下） |
+| `integrity_watch.watch_paths` | `/etc`, `/root/.ssh`等 | 整合性監視対象（コンテナ内は`/hostfs`配下、globパターン可） |
+| `integrity_watch.critical_patterns` | `*/.ssh/*` | 一致パスは新規/削除/改ざんいずれも即CRITICAL |
 | `procnet_watch.known_listen_ports` | （ホストごとに要調整） | 既知ポート一覧 |
 | `procnet_watch.known_process_keywords` | （ホストごとに要調整） | 既知プロセス名（部分一致） |
 | `procnet_watch.cpu_alert_percent` | 90 | 高CPU通知の閾値(%) |
+| `outbound_watch.known_outbound_ports` | 80, 443, 53, 123, 22, 853 | LAN外へのこのポート宛通信は正常扱い |
+| `outbound_watch.suspicious_ports` | 4444, 1337, 6666, 6667, 31337, 12345, 54321 | 一致したら閾値なしで即CRITICAL |
 | `notify.webhook_url` / `webhook_token` | "" | mailman/pushman等への転送用（任意） |
 | `ai_triage.enabled` | true | AIトリアージを使うか |
 | `ai_triage.trigger_severities` | critical, warning | トリアージ対象の重大度 |

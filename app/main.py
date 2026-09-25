@@ -6,6 +6,7 @@ import yaml
 from auth_watch import AuthWatcher
 from integrity import IntegrityWatcher
 from notify import Notifier
+from outbound_watch import OutboundWatcher
 from procnet_watch import ProcNetWatcher
 from status_writer import report_status
 
@@ -30,6 +31,8 @@ def main():
         watchers.append(IntegrityWatcher(config["integrity_watch"], notifier))
     if config.get("procnet_watch", {}).get("enabled", True):
         watchers.append(ProcNetWatcher(config["procnet_watch"], notifier))
+    if config.get("outbound_watch", {}).get("enabled", True):
+        watchers.append(OutboundWatcher(config["outbound_watch"], notifier))
 
     interval = config.get("interval_seconds", 60)
 
