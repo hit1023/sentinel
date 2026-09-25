@@ -97,6 +97,7 @@ hit-linux-ids/
 │   ├── central_config.py                      # ホスト固有設定(webui_url/token/host_label)の
 │   │                                            解決ロジック（env var > config.yamlの順）
 │   ├── status_writer.py                       # CPU/MEM/プロセス数等のスナップショット組み立て
+│   ├── updater.py                              # GitHub Releasesの新バージョン検知・自動更新
 │   └── requirements.txt
 │
 ├── packaging/                     # ネイティブ常駐用の定義ファイル
@@ -281,11 +282,24 @@ SMTPだけで動くようにしてあるので、cloneしてすぐ使える。
 （このWebUI自体がLAN内の信頼された利用者向けに無認証で動く前提のため、他の設定項目と
 同じ扱い）。
 
+#### ⬇ ダウンロード
+
+新しいホストにエージェントを導入するためのインストーラ配布ページ。GitHub Releases
+（過去バージョン含む）から直接OS別のアセットを取得できる。
+
+- OS（Linux/macOS）・バージョンをプルダウンで選択すると、対応するtar.gzへの
+  ダウンロードリンクとリリースノートが表示される
+- 共有Ingestトークン（`INGEST_TOKEN`環境変数の値）と、それを埋め込んだ
+  `curl | sudo bash`形式の実行ワンライナーをその場でコピーできる
+  （`--webui-url`は現在アクセスしているWebUIのアドレスを自動で埋め込む）
+- 実装は`webui/main.py`の`GET /api/releases`（GitHub Releases一覧、5分キャッシュ）と
+  `GET /api/central-config`（共有Ingestトークンの取得用、他の設定項目と同様に無認証）
+
+### AIトリアージのセットアップ手順
+
 既定は無効（`ai_triage.enabled: false`）。account_id/gateway_id/api_tokenの
 いずれかが未設定の場合も自動的にスキップされ、AIなしの従来どおりの通知になる
 （`app/ai_triage.py`の`should_triage()`参照）。使いたい場合のみ以下を設定する。
-
-### セットアップ手順
 
 1. Cloudflareダッシュボード → AI → **AI Gateway** で新規Gatewayを作成
    （認証はOFFにしてある。理由は下記「制約」参照）
@@ -372,6 +386,8 @@ SMTPだけで動くようにしてあるので、cloneしてすぐ使える。
 | `GET /api/stats` | 24時間集計・全ホストの状態・カテゴリ内訳 |
 | `GET /api/hosts` | ホスト一覧とオンライン判定（`HOST_STALE_SECONDS`、既定300秒） |
 | `GET /api/alerts/history?severity=&host=&category=&since_epoch=&limit=` | **長期監査用**。CRITICAL/WARNING（元severity基準、AI格下げ後も含む）だけをSQLiteから検索 |
+| `GET /api/releases` | エージェント配布ページ用。GitHub Releases一覧（5分キャッシュ） |
+| `GET /api/central-config` | エージェント配布ページ用。共有Ingestトークンの取得 |
 | `WS /ws/alerts` | `alerts.jsonl`の追記をtailしてリアルタイム配信 |
 
 ### データ永続化の設計（2層構成）
@@ -532,10 +548,10 @@ curl -sf http://localhost:8877/api/stats  # ヘルスチェック
 | `outbound_watch.known_outbound_ports` | 80, 443, 53, 123, 22, 853 | LAN外へのこのポート宛通信は正常扱い |
 | `outbound_watch.suspicious_ports` | 4444, 1337, 6666, 6667, 31337, 12345, 54321 | 一致したら閾値なしで即CRITICAL |
 | `outbound_watch.local_service_ports` | （main.pyがprocnet_watch.known_listen_portsから自動継承、手動設定不要） | このホストが公開しているサービスのポート。着信をここへの「外向き通信」と誤判定しないための除外リスト |
-| `notify.webhook_url` / `webhook_token` | "" | 既存の通知APIへの転送用（任意） |
-| `ai_triage.enabled` | true | AIトリアージを使うか |
+| `notify.webhook_url` / `webhook_token` | "" | エージェント側から独自の通知APIへ転送する場合（任意）。WebUIのメール通知設定（後述）とは別物 |
+| `ai_triage.enabled` | false | AIトリアージを使うか（cloneした人が意図せず有効化されないよう既定OFF） |
 | `ai_triage.trigger_severities` | critical, warning | トリアージ対象の重大度 |
-| `ai_triage.cloudflare_account_id` / `cloudflare_gateway_id` | 各自の値を設定 | Cloudflareダッシュボードで確認 |
+| `ai_triage.cloudflare_account_id` / `cloudflare_gateway_id` | "" | Cloudflareダッシュボードで確認して各自設定 |
 | `ai_triage.model` | `@cf/meta/llama-3.1-8b-instruct-fast` | Workers AIモデル名 |
 | `ai_triage.api_token` | "" | **.envの`CF_AI_GATEWAY_TOKEN`推奨** |
 | `ai_triage.timeout_seconds` | 8 | Gateway呼び出しのタイムアウト |
@@ -635,8 +651,6 @@ curl -sf http://localhost:8877/api/stats  # ヘルスチェック
 ## 今後の拡張候補
 
 - Windows向けエージェントの実装（現状はLinux/macOSのみ対応）。
-- WebUIからのインストーラダウンロードページ（過去バージョンも選択可能）。
-- エージェントの自動更新機能（新バージョン検知の通知は実装済み、自動適用は今後）。
 - Dockerコンテナ自体の異常（想定外イメージの起動等）を`docker.sock`経由で
   監視する拡張。
 - AIトリアージのレート制限・コスト上限（Workers AI呼び出し回数が青天井）。
