@@ -316,6 +316,32 @@ body.alert-critical .topbar {
   margin-bottom: 18px;
 }
 
+.heatmap-panel { margin-bottom: 18px; min-height: 0; }
+.heat-row { display: flex; gap: 4px; }
+.heat-cell {
+  flex: 1;
+  height: 28px;
+  border-radius: 3px;
+  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(255,255,255,0.06);
+  cursor: default;
+  transition: transform 0.15s ease;
+}
+.heat-cell:hover { transform: scaleY(1.15); }
+
+.auth-ip-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 8px;
+  border-radius: 4px;
+  background: rgba(255,255,255,0.02);
+  border: 1px solid rgba(255,255,255,0.06);
+  font-size: 12px;
+}
+.auth-ip-row .ip { flex: 1; color: #d7f6ff; font-weight: 700; letter-spacing: 0.5px; }
+.auth-ip-row .count { color: var(--neon-red); font-weight: 700; }
+
 .feed-row { display: block; }
 
 .stat-card {

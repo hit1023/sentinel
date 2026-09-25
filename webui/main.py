@@ -3,13 +3,17 @@
 import asyncio
 import json
 import os
+import re
 import sqlite3
 import time
 import uuid
-from collections import Counter
+from collections import Counter, defaultdict
 
 from fastapi import FastAPI, Header, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
+
+# auth_watchのアラートメッセージから発信元IPを抜き出す（"from=IP" / "疑い: IP から"の2パターン）
+AUTH_IP_RE = re.compile(r"from=([0-9a-fA-F:.]+)|疑い: ([0-9a-fA-F:.]+) から")
 
 DATA_DIR = os.environ.get("IDS_DATA_DIR", "/data")
 ALERTS_JSONL = os.path.join(DATA_DIR, "alerts.jsonl")
@@ -345,6 +349,39 @@ def api_stats():
     sev_counter = Counter(a.get("severity", "unknown") for a in last_24h)
     cat_counter = Counter(a.get("category", "unknown") for a in last_24h)
 
+    # 直近24時間を1時間単位のバケットに分け、時間帯別の検知傾向をヒートマップ表示できるようにする
+    now_hour = int(now // 3600)
+    hourly = defaultdict(Counter)
+    for a in last_24h:
+        offset = now_hour - int(a.get("epoch", 0) // 3600)
+        if 0 <= offset < 24:
+            sev = a.get("severity", "info")
+            sev = sev if sev in ("critical", "warning") else "info"
+            hourly[offset][sev] += 1
+    heatmap = []
+    for offset in range(23, -1, -1):
+        c = hourly.get(offset, Counter())
+        heatmap.append({
+            "hour_start": (now_hour - offset) * 3600,
+            "critical": c.get("critical", 0),
+            "warning": c.get("warning", 0),
+            "info": c.get("info", 0),
+        })
+
+    # 認証失敗の発信元IPランキング（ログイン成功は除外し、ブルートフォース/
+    # 存在しないユーザー/要注意ユーザーへの失敗試行だけを集計する）
+    ip_counter = Counter()
+    for a in last_24h:
+        if a.get("category") != "auth_watch":
+            continue
+        msg = a.get("message", "")
+        if "ログイン成功" in msg:
+            continue
+        m = AUTH_IP_RE.search(msg)
+        if m:
+            ip_counter[m.group(1) or m.group(2)] += 1
+    top_auth_ips = [{"ip": ip, "count": c} for ip, c in ip_counter.most_common(10)]
+
     hosts_status = _read_hosts_status()
     hosts_out = []
     online_cpu = []
@@ -382,6 +419,8 @@ def api_stats():
         "total_alerts_24h": len(last_24h),
         "by_severity": dict(sev_counter),
         "by_category": dict(cat_counter),
+        "heatmap": heatmap,
+        "top_auth_ips": top_auth_ips,
         "server_time": now,
     }
 

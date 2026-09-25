@@ -102,11 +102,21 @@
     </div>
   </section>
 
+  <section class="panel heatmap-panel">
+    <div class="panel-head"><span>24H ACTIVITY HEATMAP（1時間単位・全ホスト合算）</span></div>
+    <div class="heat-row" id="heatRow"></div>
+  </section>
+
   <section class="mid-grid">
 
     <div class="panel side-panel">
       <div class="panel-head"><span>CATEGORY BREAKDOWN (24H)</span></div>
       <div class="bars" id="categoryBars"></div>
+
+      <div class="panel-head" style="margin-top:20px;"><span>認証失敗 発信元IPランキング (24H)</span></div>
+      <div class="hosts-list" id="authIpList">
+        <div class="mono-dim">認証失敗はありません</div>
+      </div>
 
       <div class="panel-head" style="margin-top:20px;">
         <span>SUPPRESSION RULES（誤検知として除外中）</span>

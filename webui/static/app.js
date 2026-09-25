@@ -408,6 +408,8 @@ async function loadStats() {
 
     renderHostsList(data.hosts || []);
     renderCategoryBars(data.by_category || {});
+    renderHeatmap(data.heatmap || []);
+    renderAuthIpRanking(data.top_auth_ips || []);
   } catch (e) {
     console.error("stats取得に失敗", e);
   }
@@ -473,6 +475,64 @@ function renderCategoryBars(byCategory) {
       <div class="bar-label"><span>${cat}</span><span>${count}</span></div>
       <div class="bar-track"><div class="bar-fill" style="width:${(count / max) * 100}%"></div></div>
     `;
+    container.appendChild(row);
+  }
+}
+
+function renderHeatmap(heatmap) {
+  const container = document.getElementById("heatRow");
+  if (!container) return;
+  container.innerHTML = "";
+  if (!heatmap.length) return;
+
+  // 各時間帯の「最も重い重大度」で色を決め、その重大度の件数に応じて濃淡をつける
+  // （critical優先 > warning > info、GitHubのコントリビューショングラフと同じ発想）
+  const maxBySev = { critical: 1, warning: 1, info: 1 };
+  for (const h of heatmap) {
+    maxBySev.critical = Math.max(maxBySev.critical, h.critical);
+    maxBySev.warning = Math.max(maxBySev.warning, h.warning);
+    maxBySev.info = Math.max(maxBySev.info, h.info);
+  }
+
+  for (const h of heatmap) {
+    const cell = document.createElement("div");
+    cell.className = "heat-cell";
+    let sev = null;
+    let count = 0;
+    if (h.critical > 0) { sev = "critical"; count = h.critical; }
+    else if (h.warning > 0) { sev = "warning"; count = h.warning; }
+    else if (h.info > 0) { sev = "info"; count = h.info; }
+
+    if (sev) {
+      const ratio = Math.min(1, count / maxBySev[sev]);
+      const intensity = 0.15 + ratio * 0.75;
+      const [color] = SPARK_COLORS[sev] || SPARK_COLORS.info;
+      const rgb = color.startsWith("#")
+        ? [parseInt(color.slice(1, 3), 16), parseInt(color.slice(3, 5), 16), parseInt(color.slice(5, 7), 16)]
+        : [36, 240, 255];
+      cell.style.background = `rgba(${rgb[0]},${rgb[1]},${rgb[2]},${intensity})`;
+      cell.style.borderColor = `rgba(${rgb[0]},${rgb[1]},${rgb[2]},${Math.min(1, intensity + 0.2)})`;
+    }
+
+    const d = new Date(h.hour_start * 1000);
+    const label = d.toLocaleString("ja-JP", { month: "numeric", day: "numeric", hour: "2-digit" });
+    cell.title = `${label}時台\nCRITICAL: ${h.critical} / WARNING: ${h.warning} / INFO: ${h.info}`;
+    container.appendChild(cell);
+  }
+}
+
+function renderAuthIpRanking(ips) {
+  const container = document.getElementById("authIpList");
+  if (!container) return;
+  if (!ips.length) {
+    container.innerHTML = '<div class="mono-dim">認証失敗はありません</div>';
+    return;
+  }
+  container.innerHTML = "";
+  for (const { ip, count } of ips) {
+    const row = document.createElement("div");
+    row.className = "auth-ip-row";
+    row.innerHTML = `<span class="ip">${escapeHtml(ip)}</span><span class="count">${count}</span>`;
     container.appendChild(row);
   }
 }
