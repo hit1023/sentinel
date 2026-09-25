@@ -832,6 +832,50 @@ body.alert-critical .topbar {
 }
 .settings-add-row input:focus { outline: none; border-color: var(--neon-cyan); }
 
+/* ダウンロードタブ: ネイティブのプルダウン見た目を消し、ダッシュボードと同じ
+   ワイヤーフレーム/ターミナル調に揃える */
+.dl-select {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 100%;
+  background:
+    linear-gradient(45deg, transparent 50%, var(--neon-cyan) 50%),
+    linear-gradient(135deg, var(--neon-cyan) 50%, transparent 50%),
+    rgba(36,240,255,0.04);
+  background-position: calc(100% - 20px) calc(50% - 3px), calc(100% - 14px) calc(50% - 3px);
+  background-size: 6px 6px, 6px 6px;
+  background-repeat: no-repeat;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 10px 40px 10px 12px;
+  color: #d7f6ff;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+.dl-select:hover, .dl-select:focus {
+  outline: none;
+  border-color: var(--neon-cyan);
+  background-color: rgba(36,240,255,0.08);
+}
+.dl-select option {
+  background: #05131a;
+  color: #d7f6ff;
+  font-size: 14px;
+  text-transform: none;
+}
+
+.dl-token-input {
+  font-size: 15px !important;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  color: var(--neon-green) !important;
+  text-shadow: 0 0 8px rgba(57,255,138,0.35);
+}
+
 .whitelist-row {
   display: flex;
   align-items: center;

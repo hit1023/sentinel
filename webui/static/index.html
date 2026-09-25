@@ -121,13 +121,13 @@
 
         <div class="settings-form">
           <label class="settings-label">OS</label>
-          <select id="dlOsSelect">
-            <option value="linux">🐧 Linux（x86_64 / systemd）</option>
-            <option value="macos">🍎 macOS（Apple Silicon / launchd）</option>
+          <select id="dlOsSelect" class="dl-select">
+            <option value="linux">[ LINUX ] x86_64 / systemd</option>
+            <option value="macos">[ MACOS ] apple silicon / launchd</option>
           </select>
 
           <label class="settings-label">バージョン</label>
-          <select id="dlVersionSelect">
+          <select id="dlVersionSelect" class="dl-select">
             <option value="">読み込み中…</option>
           </select>
 
@@ -158,13 +158,13 @@
 
         <label class="settings-label">共有Ingestトークン（<code>--token</code>にそのまま使う）</label>
         <div class="settings-add-row">
-          <input type="text" id="dlIngestToken" readonly placeholder="（取得中…）">
+          <input type="text" id="dlIngestToken" class="dl-token-input" readonly placeholder="（取得中…）">
           <span class="mini-btn" id="dlCopyTokenBtn">コピー</span>
         </div>
 
         <label class="settings-label">実行コマンド（対象ホストの端末に貼り付ける）</label>
         <div class="settings-add-row">
-          <input type="text" id="dlCurlCommand" readonly>
+          <input type="text" id="dlCurlCommand" class="dl-token-input" readonly>
           <span class="mini-btn" id="dlCopyCurlBtn">コピー</span>
         </div>
         <p class="mono-dim" style="margin:8px 0 0; font-size:12px;">
