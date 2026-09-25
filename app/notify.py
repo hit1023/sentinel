@@ -17,7 +17,10 @@ JST = datetime.timezone(datetime.timedelta(hours=9))
 
 class Notifier:
     def __init__(self, config: dict, ai_triage_config: dict | None = None, central_config: dict | None = None):
-        self.log_file = config.get("log_file", os.path.join(paths.data_dir(), "alerts.log"))
+        # config.get(key, default)はキーが存在すれば値(空文字含む)をそのまま返すため、
+        # config.yaml側でlog_file: ""(未設定の意図)にしていてもdefaultは使われない。
+        # 明示的なfalsyチェックでdata_dir()ベースのデフォルトにフォールバックさせる。
+        self.log_file = config.get("log_file") or os.path.join(paths.data_dir(), "alerts.log")
         self.webhook_url = config.get("webhook_url") or None
         self.webhook_token = config.get("webhook_token") or None
         self.ai_triage_config = ai_triage_config or {}

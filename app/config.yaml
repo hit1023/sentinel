@@ -86,7 +86,9 @@ integrity_watch:
   critical_patterns:
     - "*/.ssh/*"
   # ベースライン（初回スキャン結果）の保存先。既存があれば差分検知、なければ新規作成のみ。
-  baseline_path: /data/integrity_baseline.json
+  # log_fileと同じ理由でDocker/ネイティブ間の実パスの違いを吸収するため未設定にし、
+  # app/paths.pyのdata_dir()に解決させる。
+  baseline_path: ""
 
 # --- 外向き通信の異常検知 ---
 # LAN内(プライベートIP)への通信は監視対象外。それ以外の宛先への確立済み通信のうち、
@@ -163,8 +165,11 @@ notify:
   # 例: https://pushman.s-quad.com/api/notify （実際のエンドポイントに合わせて変更）
   webhook_url: ""
   webhook_token: ""
-  # 常にローカルログファイルにも書き出す
-  log_file: /data/alerts.log
+  # 常にローカルログファイルにも書き出す。
+  # 明示的な絶対パスをここで固定すると、Docker(/data)とネイティブ(/var/lib/sentinel)で
+  # 必要な実パスが違うため一方が壊れる。未設定にしてapp/paths.pyのdata_dir()に
+  # 解決させる（Docker: HITIDS_DATA_DIR=/data、ネイティブ: /var/lib/sentinel）。
+  log_file: ""
 
 # --- AIトリアージ（Cloudflare AI Gateway経由） ---
 # CRITICAL/WARNINGアラート発生時、生ログをLLMに渡して日本語1〜2文の

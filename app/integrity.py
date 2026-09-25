@@ -32,8 +32,11 @@ class IntegrityWatcher:
         # exclude_patterns/critical_patternsは先頭が*から始まるfnmatchパターンのため
         # プレフィックスの有無に関わらずマッチするので変換不要。
         self.exclude_patterns = config.get("exclude_patterns", [])
-        self.baseline_path = config.get(
-            "baseline_path", os.path.join(paths.data_dir(), "integrity_baseline.json")
+        # config.get(key, default)は空文字("" = 未設定の意図)でもキーが存在すれば
+        # そのまま返しdefaultにフォールバックしないため、明示的にorで判定する
+        # （notify.pyのlog_fileで踏んだのと同じ罠）。
+        self.baseline_path = config.get("baseline_path") or os.path.join(
+            paths.data_dir(), "integrity_baseline.json"
         )
         # ここに一致するパスは、新規作成・削除であっても（通常はwarning止まりのところ）
         # 即座にcriticalとして扱う。SSH公開鍵はroot以外の全ユーザー分を対象にしたいので

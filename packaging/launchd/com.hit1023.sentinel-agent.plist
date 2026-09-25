@@ -11,7 +11,7 @@
   <array>
     <string>/bin/sh</string>
     <string>-c</string>
-    <string>[ -f /etc/sentinel/env ] &amp;&amp; . /etc/sentinel/env; export HITIDS_CONFIG_PATH=/etc/sentinel/config.yaml; export HITIDS_DATA_DIR=/var/lib/sentinel; exec /opt/sentinel/sentinel-agent</string>
+    <string>set -a; [ -f /etc/sentinel/env ] &amp;&amp; . /etc/sentinel/env; set +a; export HITIDS_CONFIG_PATH=/etc/sentinel/config.yaml; export HITIDS_DATA_DIR=/var/lib/sentinel; exec /opt/sentinel/sentinel-agent</string>
   </array>
 
   <key>RunAtLoad</key>
