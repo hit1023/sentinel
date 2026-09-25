@@ -49,21 +49,12 @@
 
 ## アーキテクチャ概要
 
-```
-┌──────────────┐   HTTP POST /api/ingest/alert    ┌──────────────────────┐
-│ agent (host A)│ ───────────────────────────────▶ │                      │
-├──────────────┤   HTTP POST /api/ingest/status    │  manager             │
-│ agent (host B)│ ───────────────────────────────▶ │  FastAPI + WebSocket │
-├──────────────┤                                   │  alerts.jsonl        │
-│ agent (host C)│ ───────────────────────────────▶ │  hosts_status.json   │
-└──────────────┘                                   └──────────┬───────────┘
-                                                               │ WebSocket / REST
-                                                               ▼
-                                                      ブラウザ(ダッシュボード)
+![SENTINEL アーキテクチャ概要](docs/img/architecture.png)
 
-各agentは内部で Cloudflare AI Gateway (Workers AI) を叩いて
-CRITICAL/WARNINGの脅威判定・日本語コメント生成も行う（agent→Cloudflare、managerは非関与）
-```
+各エージェントは内部でCloudflare AI Gateway (Workers AI) を叩いてCRITICAL/WARNINGの
+脅威判定・日本語コメント生成を行う（agent→Cloudflare、managerは非関与）。判定結果を
+含むアラートはマネージャーへHTTP POSTされ、`alerts.jsonl`（直近tail・WebSocket配信用）と
+`alerts_important.db`（SQLite、CRITICAL/WARNINGの長期監査用）の2層で永続化される。
 
 - **エージェント**（`app/`）: 各監視対象ホストで動く。複数のルールベース検知を行い、
   検知結果をCloudflare AI Gatewayでトリアージしたうえで、マネージャーへHTTP POSTする。
