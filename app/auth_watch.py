@@ -26,6 +26,7 @@ class AuthWatcher:
         self.notify_on_success = config.get("notify_on_success", True)
         self.use_journalctl = config.get("use_journalctl", False)
         self.log_paths = config.get("log_paths", [])
+        self.sensitive_users = {u.lower() for u in config.get("sensitive_users", [])}
         # ip -> deque[timestamp]
         self._fail_events = defaultdict(deque)
         self._state = self._load_state()
@@ -99,6 +100,7 @@ class AuthWatcher:
         if m:
             ip = m.group("ip")
             user = m.group("user")
+            is_invalid_user = m.group(1) is not None  # "invalid user " prefix
             dq = self._fail_events[ip]
             dq.append(now)
             while dq and now - dq[0] > self.fail_window:
@@ -109,6 +111,16 @@ class AuthWatcher:
                     f"ブルートフォースの疑い: {ip} から{self.fail_window}秒間に"
                     f"{self.fail_threshold}回のログイン失敗（直近ユーザー: {user}）",
                     "critical",
+                )
+            # root等のセンシティブなユーザー名は、実在するため「invalid user」判定に
+            # ならず、上記の閾値到達までアラートが一切出ない。狙われやすい名前は
+            # ブルートフォース閾値を待たず1回目から即座に警告する。
+            # (invalid userの場合は下のINVALID_USER_REで既に警告されるため対象外)
+            elif not is_invalid_user and user.lower() in self.sensitive_users:
+                self.notifier.alert(
+                    "auth_watch",
+                    f"要注意ユーザーへのログイン失敗: user={user} from={ip}",
+                    "warning",
                 )
             return
 

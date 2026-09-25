@@ -37,6 +37,14 @@ auth_watch:
   fail_window_seconds: 300
   # 成功ログインも通知するか（新規ログイン検知用）
   notify_on_success: true
+  # このユーザー名への失敗ログインは、ブルートフォース閾値に達していなくても
+  # 1回目から即座にWARNING通知する（root等、狙われやすく実在するユーザー名は
+  # 「invalid user」判定にならないため、通常は閾値到達までログに埋もれてしまう）
+  sensitive_users:
+    - root
+    - admin
+    - administrator
+    - ubuntu
 
 # --- ファイル整合性監視（簡易AIDE） ---
 integrity_watch:

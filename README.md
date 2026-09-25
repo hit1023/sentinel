@@ -121,6 +121,12 @@ hit-linux-ids/
      超えたらブルートフォースとして通知（既定: 300秒に5回）
    - 存在しないユーザーへのログイン試行を通知
    - ログイン成功も通知（`notify_on_success`でOFF可）
+   - **`sensitive_users`（root/admin等）への失敗ログインは、ブルートフォース閾値に
+     達していなくても1回目から即座にWARNING通知する。**
+     実在するユーザー名への失敗は「invalid user」判定にならないため、通常は
+     `fail_threshold`回に達するまで完全に無音になってしまう（＝存在しないユーザー名
+     [例: admin@]への攻撃はすぐ警告されるのに、より危険なroot単体への数回の
+     失敗試行は見逃されるという逆転現象があった。これに気づいて追加した挙動）
    - **初回起動時は既存の`auth.log`を遡って読まず、ファイル末尾から監視を開始する**
      （でないと巨大な既存ログを一括処理して大量の過去ログイン通知が出る。実際に
      この不具合を踏んで直した経緯あり→「教訓」節参照）
@@ -371,6 +377,7 @@ skip-worktreeにしている場合は`git pull`が安全）。
 | `auth_watch.fail_window_seconds` | 300 | 上記の時間窓 |
 | `auth_watch.notify_on_success` | true | ログイン成功も通知するか |
 | `auth_watch.use_journalctl` | false | trueならjournalctl方式（journalマウントも要有効化） |
+| `auth_watch.sensitive_users` | root, admin, administrator, ubuntu | これらのユーザーへの失敗ログインは閾値未満でも即WARNING |
 | `integrity_watch.watch_paths` | `/etc`, `/root/.ssh`等 | 整合性監視対象（コンテナ内は`/hostfs`配下） |
 | `procnet_watch.known_listen_ports` | （ホストごとに要調整） | 既知ポート一覧 |
 | `procnet_watch.known_process_keywords` | （ホストごとに要調整） | 既知プロセス名（部分一致） |
