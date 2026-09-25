@@ -1,32 +1,26 @@
-# hit-linux-ids（SENTINEL）
+# SENTINEL
 
-学習・研究用の軽量ホスト型IDS（侵入検知）。**マネージャー/エージェント構成**で、
-複数のLinuxホストを1つのサイバーパンク風ダッシュボードから横断監視できる。
-CRITICAL/WARNINGアラートは**Cloudflare AI Gateway経由でAIに脅威判定させ**、
-非脅威と判定されたものは自動的に静音化する（AIに運用判断を任せる設計）。
+マルチホスト対応のホスト型IDS（侵入検知システム）。**マネージャー/エージェント構成**で、
+複数のLinux/macOSホストを1つのダッシュボードから横断監視できる。
+検知したCRITICAL/WARNINGアラートは**Cloudflare AI Gateway経由でAIに脅威判定させ**、
+非脅威と判定されたものは自動的に静音化する（一次仕分けをAIに任せる設計）。
 
-> **このドキュメントについて**: 本プロジェクトはClaude(Sonnet 5)が実装を担当し、
-> このセッション以降はCodexに引き継ぐ想定。設計判断の背景・既知の制約・
-> 過去に踏んだ地雷を含めて詳しめに書いてあるので、まずここを一通り読んでから
-> コードに手を入れることを推奨する。
-
-**注意**: 商用IDS（Wazuh/OSSEC/AIDE等）の代替ではなく、学習目的の自作ツール。
-検知ロジックは単純なルールベースであり、誤検知・見逃しがあり得る。実運用のセキュリティ
-対策としては使わないこと（README末尾「今後の拡張候補」も参照）。
+エージェントはDockerだけでなく、systemd(Linux)/launchd(macOS)によるネイティブ常駐にも
+対応しており、GitHub Releases配布のインストーラでDockerなしに導入できる。
 
 ---
 
 ## 目次
 
-1. [コンセプト・こだわった点](#コンセプトこだわった点)
+1. [コンセプト](#コンセプト)
 2. [アーキテクチャ概要](#アーキテクチャ概要)
 3. [ディレクトリ構成](#ディレクトリ構成)
 4. [検知内容（エージェント）](#検知内容エージェント)
 5. [AIトリアージ（Cloudflare AI Gateway）](#aiトリアージcloudflare-ai-gateway)
 6. [WebUI（ダッシュボード）](#webuiダッシュボード)
 7. [セットアップ・新規ホスト追加](#セットアップ新規ホスト追加)
-8. [CI/CD](#cicd)
-9. [現在デプロイ済みの環境](#現在デプロイ済みの環境)
+8. [エージェントのバージョニング・配布](#エージェントのバージョニング配布)
+9. [CI/CD](#cicd)
 10. [config.yaml リファレンス](#configyaml-リファレンス)
 11. [既知の制約・ハマりどころ](#既知の制約ハマりどころ)
 12. [これまでに踏んだバグと直し方（教訓）](#これまでに踏んだバグと直し方教訓)
@@ -34,46 +28,49 @@ CRITICAL/WARNINGアラートは**Cloudflare AI Gateway経由でAIに脅威判定
 
 ---
 
-## コンセプト・こだわった点
+## コンセプト
 
-このプロジェクトは「セキュリティ監視ツールとして完璧であること」よりも、
-以下の2点を優先して作っている:
+このプロジェクトは以下の2点を軸に作っている:
 
 1. **機能よりサイバーなデザイン**: ネオン配色、動くパーティクルネットワーク背景、
    瞬きするアイ・アイコン、スキャンライン演出、CRITICAL検知時の画面フラッシュ、
    ターミナル風フィードなど、「見ていて気分が上がるダッシュボード」であることに
    実装時間の相当量を割いている。検知ロジック自体はシンプルなルールベースに留め、
    その分UIの演出を作り込む方針で進めた（`webui/static/`配下のCSS/JSがその蓄積）。
-2. **AIに脅威判定を任せる**: Cloudflare AI Gateway（Workers AI）を使い、検知した
+2. **AIに一次仕分けを任せる**: Cloudflare AI Gateway（Workers AI）を使い、検知した
    異常が本当に脅威かどうかをLLMに判定させ、非脅威と判定されたものは自動的に
    目立たなくする（`ai_dismissed`）。ルールベース検知はどうしても誤検知（開発中の
-   `sleep`コマンドやdockerの内部プロセス等）が多くなるが、それを人間がいちいち
-   仕分けるのではなく「限りなくAIにお任せ」する運用思想。
+   一時プロセスやDockerの内部プロセス等）が多くなるが、それを人間が逐一仕分けるのではなく
+   AIに一次判定を任せ、人間は最終確認と誤検知ルールの登録に集中する運用思想。
+
+検知ロジック自体はシンプルなルールベースであり、大規模商用IDS（Wazuh/OSSEC等）が持つ
+シグネチャDBや高度な相関分析は持たない。その代わり、複数ホストを横断した見やすさ、
+誤検知への対処のしやすさ、AIによる一次トリアージという運用面を作り込んでいる。
 
 ## アーキテクチャ概要
 
 ```
-┌─────────────┐   HTTP POST /api/ingest/alert    ┌──────────────────────┐
-│  agent(gate) │ ───────────────────────────────▶ │                      │
-├─────────────┤   HTTP POST /api/ingest/status    │  webui (通常gate1台)  │
-│  agent(h-1) │ ───────────────────────────────▶ │  FastAPI + WebSocket │
-├─────────────┤                                   │  alerts.jsonl        │
-│ agent(mac)  │ ───────────────────────────────▶ │  hosts_status.json   │
-└─────────────┘                                   └──────────┬───────────┘
-                                                              │ WebSocket / REST
-                                                              ▼
-                                                     ブラウザ(ダッシュボード)
+┌──────────────┐   HTTP POST /api/ingest/alert    ┌──────────────────────┐
+│ agent (host A)│ ───────────────────────────────▶ │                      │
+├──────────────┤   HTTP POST /api/ingest/status    │  manager             │
+│ agent (host B)│ ───────────────────────────────▶ │  FastAPI + WebSocket │
+├──────────────┤                                   │  alerts.jsonl        │
+│ agent (host C)│ ───────────────────────────────▶ │  hosts_status.json   │
+└──────────────┘                                   └──────────┬───────────┘
+                                                               │ WebSocket / REST
+                                                               ▼
+                                                      ブラウザ(ダッシュボード)
 
 各agentは内部で Cloudflare AI Gateway (Workers AI) を叩いて
-CRITICAL/WARNINGの脅威判定・日本語コメント生成も行う（agent→Cloudflare、webuiは関与しない）
+CRITICAL/WARNINGの脅威判定・日本語コメント生成も行う（agent→Cloudflare、managerは非関与）
 ```
 
-- **エージェント**（`app/`）: 各監視対象ホストで動く。3種類のルールベース検知を行い、
-  検知結果をCloudflare AI Gatewayでトリアージしたうえで、司令塔WebUIへHTTP POSTする。
-  ローカルには人間可読ログ（`data/alerts.log`）と、各Watcherの状態ファイル
-  （オフセット・ベースライン等）だけを持つ。**アラートの構造化データ(jsonl)は
-  もうローカルには持たない**（司令塔WebUI側に一元化された）。
-- **司令塔WebUI**（`webui/`）: 通常1台（gate）だけで動かす。全ホストからのPOSTを
+- **エージェント**（`app/`）: 各監視対象ホストで動く。複数のルールベース検知を行い、
+  検知結果をCloudflare AI Gatewayでトリアージしたうえで、マネージャーへHTTP POSTする。
+  Docker常駐（`docker-compose.yml`）、ネイティブ常駐（systemd/launchd）のどちらでも
+  動作する共通コードベース。ローカルには人間可読ログ（`data/alerts.log`）と、
+  各Watcherの状態ファイル（オフセット・ベースライン等）だけを持つ。
+- **マネージャー**（`webui/`）: 通常1台だけで動かす。全ホストからのPOSTを
   `data/alerts.jsonl`（アラート）と`data/hosts_status.json`（ホストごとの生存状況・
   CPU/MEM等）に集約し、ブラウザへREST + WebSocketで配信する。認証は共有Bearer
   トークン（`INGEST_TOKEN`環境変数）のみの簡易なもの。
@@ -82,36 +79,47 @@ CRITICAL/WARNINGの脅威判定・日本語コメント生成も行う（agent�
 
 ```
 hit-linux-ids/
-├── install.sh              # 新規ホスト導入インストーラー（後述）
-├── docker-compose.yml       # agent(既定)/webui(--profile server)の2サービス定義
-├── Dockerfile               # エージェント用イメージ
-├── .env                     # ホスト固有の秘密値（gitignore対象、各ホストで手動作成）
-├── .github/workflows/deploy.yml  # gate専用のCI/CD（後述）
+├── install.sh                    # Docker版インストーラー
+├── install-native.sh             # ネイティブ版インストーラー（Linux/systemd）
+├── install-macos.sh              # ネイティブ版インストーラー（macOS/launchd）
+├── docker-compose.yml            # agent(既定)/webui(--profile server)の2サービス定義
+├── Dockerfile                    # エージェント用イメージ
+├── .env                          # ホスト固有の秘密値（gitignore対象、各ホストで手動作成）
+├── .github/workflows/
+│   ├── deploy.yml                  # マネージャーホスト専用のCI/CD（後述）
+│   └── release.yml                 # エージェントのビルド・GitHub Releases公開
 │
-├── app/                     # エージェント本体（Pythonイメージのビルド元）
-│   ├── main.py               # エントリポイント。設定読み込み→監視ループ
-│   ├── config.yaml            # 検知設定（全ホスト共通、gitで配布される）
-│   ├── auth_watch.py           # 認証ログ監視
-│   ├── integrity.py             # ファイル整合性監視（簡易AIDE）
-│   ├── procnet_watch.py          # プロセス・ネットワーク異常検知
-│   ├── notify.py                  # アラート発火の中枢（AIトリアージ呼び出し→
-│   │                               中央WebUI送信→ローカルログ→Webhook、の順で処理）
-│   ├── ai_triage.py                 # Cloudflare AI Gatewayへの問い合わせ・応答パース
-│   ├── central_config.py             # ホスト固有設定(webui_url/token/host_label)の
-│   │                                   解決ロジック（env var > config.yamlの順）
-│   ├── status_writer.py               # CPU/MEM/プロセス数等のスナップショット組み立て
+├── app/                           # エージェント本体
+│   ├── main.py                      # エントリポイント。設定読み込み→監視ループ
+│   ├── config.yaml                   # 検知設定（全ホスト共通、gitで配布される）
+│   ├── paths.py                       # Docker/ネイティブ両対応のパス解決ヘルパー
+│   ├── VERSION                         # エージェントのバージョン番号
+│   ├── auth_watch.py                    # 認証ログ監視
+│   ├── integrity.py                      # ファイル整合性監視（簡易AIDE）
+│   ├── procnet_watch.py                   # プロセス・ネットワーク異常検知
+│   ├── outbound_watch.py                   # 外向き通信の異常検知
+│   ├── notify.py                            # アラート発火の中枢（AIトリアージ呼び出し→
+│   │                                          マネージャー送信→ローカルログ→Webhook）
+│   ├── ai_triage.py                          # Cloudflare AI Gatewayへの問い合わせ・応答パース
+│   ├── central_config.py                      # ホスト固有設定(webui_url/token/host_label)の
+│   │                                            解決ロジック（env var > config.yamlの順）
+│   ├── status_writer.py                       # CPU/MEM/プロセス数等のスナップショット組み立て
 │   └── requirements.txt
 │
-└── webui/                    # 司令塔WebUI（別イメージ）
-    ├── main.py                 # FastAPI本体。/api/ingest/*, /api/alerts, /api/stats,
-    │                            # /api/hosts, /ws/alerts
+├── packaging/                     # ネイティブ常駐用の定義ファイル
+│   ├── systemd/sentinel-agent.service
+│   └── launchd/com.hit1023.sentinel-agent.plist
+│
+└── webui/                         # マネージャー（別イメージ）
+    ├── main.py                      # FastAPI本体。/api/ingest/*, /api/alerts, /api/stats,
+    │                                 # /api/hosts, /api/alerts/history, /ws/alerts
     ├── Dockerfile
     ├── requirements.txt
     └── static/
-        ├── index.html           # ダッシュボードのDOM構造
-        ├── style.css             # ネオン配色・演出全般のCSS
-        ├── app.js                 # フィード描画・フィルタ・WebSocket・チャート等
-        └── netbg.js                # 背景の動くパーティクルネットワーク（canvas）
+        ├── index.html                # ダッシュボードのDOM構造
+        ├── style.css                  # ネオン配色・演出全般のCSS
+        ├── app.js                      # フィード描画・フィルタ・WebSocket・チャート等
+        └── netbg.js                    # 背景の動くパーティクルネットワーク（canvas）
 ```
 
 ## 検知内容（エージェント）
@@ -124,9 +132,9 @@ hit-linux-ids/
    - **`sensitive_users`（root/admin等）への失敗ログインは、ブルートフォース閾値に
      達していなくても1回目から即座にWARNING通知する。**
      実在するユーザー名への失敗は「invalid user」判定にならないため、通常は
-     `fail_threshold`回に達するまで完全に無音になってしまう（＝存在しないユーザー名
-     [例: admin@]への攻撃はすぐ警告されるのに、より危険なroot単体への数回の
-     失敗試行は見逃されるという逆転現象があった。これに気づいて追加した挙動）
+     `fail_threshold`回に達するまで完全に無音になってしまう（＝存在しないユーザー名への
+     攻撃はすぐ警告されるのに、より危険なroot単体への数回の失敗試行は見逃されるという
+     逆転現象があった。これに気づいて追加した挙動）
    - **初回起動時は既存の`auth.log`を遡って読まず、ファイル末尾から監視を開始する**
      （でないと巨大な既存ログを一括処理して大量の過去ログイン通知が出る。実際に
      この不具合を踏んで直した経緯あり→「教訓」節参照）
@@ -142,8 +150,8 @@ hit-linux-ids/
      防ぐため）。**見慣れない国からのログイン試行（失敗）はWARNING**として通知する
      （`_is_unusual_location_readonly()`、ベースラインへの書き込みは行わない読み取り専用判定）。
      社内LAN（プライベートIP）からのアクセスは常にスキップ（`location`が付かず、
-     見慣れない国判定の対象にもならない）。結果はIPごとに`/data/geoip_cache.json`に
-     キャッシュされ、同じIPへの繰り返し問い合わせを避ける
+     見慣れない国判定の対象にもならない）。結果はIPごとにキャッシュされ、
+     同じIPへの繰り返し問い合わせを避ける
 2. **ファイル整合性監視**（`app/integrity.py`、簡易AIDE）
    - `/etc`, `/root/.ssh`, `/etc/nginx`, `/etc/docker` 等の重要ファイルのSHA-256を記録
    - 初回はベースライン作成のみ。以降は追加/削除/改ざん（ハッシュ不一致）を検知
@@ -163,7 +171,7 @@ hit-linux-ids/
    - `integrity_watch.critical_patterns`（既定`*/.ssh/*`）に一致するパスは、
      通常は新規作成/削除がWARNING止まりのところ、**新規作成・削除・改ざんの
      いずれでも即CRITICAL**として扱う
-   - `watch_paths`はglobパターンに対応（`/hostfs/home/*/.ssh`で、rootだけでなく
+   - `watch_paths`はglobパターンに対応（`/home/*/.ssh`で、rootだけでなく
      全ユーザーのSSH鍵を対象化できる）
 
 いずれも`Notifier.alert(category, message, severity)`を呼ぶだけの単純なインターフェースで、
@@ -176,7 +184,7 @@ CRITICAL/WARNINGアラート発生時、`app/notify.py`の`Notifier.alert()`が
 `app/ai_triage.py`の`triage()`を呼び出し、生ログをWorkers AI（Cloudflare AI Gateway
 経由）に渡して以下を行わせる:
 
-1. **�eneral脅威判定**（`THREAT: YES` / `THREAT: NO`）
+1. **脅威判定**（`THREAT: YES` / `THREAT: NO`）
 2. **日本語1〜2文のトリアージコメント**（何が起きたか・緊急度・次に確認すべきこと）
 
 プロンプト（`ai_triage.py`の`SYSTEM_PROMPT`）は、応答を必ず
@@ -194,8 +202,7 @@ THREAT: YES または THREAT: NO
 - CRITICALフラッシュ演出・Webhook通知の対象外になる
 - **削除はされず**、フィード内には半透明+「AI SILENCED」バッジ付きで表示され続ける
   （後から見返して監査できる）
-- **TOPの「AI LATEST VERDICT」バナーには出さない**（目立たせる必要がないため。
-  これはユーザーからのフィードバックで後から直した挙動）
+- **TOPの「AI LATEST VERDICT」バナーには出さない**（目立たせる必要がないため）
 
 ### ユーザー起点の抑制ルール（AIとは独立した誤検知除外）
 
@@ -222,12 +229,12 @@ AIの判定に頼らず、**人間が「これは脅威ではない」と一度�
 
 ### 設定タブ
 
-ヘッダー右上の「⚙ 設定」ボタンから開くモーダルは2タブ構成:
+ヘッダー右上の「⚙ 設定」ボタンから開くモーダルは複数タブ構成:
 
 #### 🔐 SSH許可リスト（ホワイトリスト）
 
-ヘッダー右上の「⚙ 設定」ボタンからモーダルを開くと、SSH（auth_watch）専用の
-許可リストを管理できる。汎用的なSUPPRESSION RULESとは別枠で、以下の2種類を登録できる:
+SSH（auth_watch）専用の許可リストを管理できる。汎用的なSUPPRESSION RULESとは
+別枠で、以下の2種類を登録できる:
 
 - **IP / CIDR**（例: `203.0.113.10`、`203.0.113.0/24`） — メッセージ中の`from=IP`を
   Pythonの`ipaddress`モジュールで正しくネットワーク判定する（CIDR範囲にも対応）
@@ -245,18 +252,17 @@ SUPPRESSION RULESと同じ`suppressed`フラグを使うため、SUPPRESSION RUL
 モーダルを開かずその場でワンクリック登録できる（IPと逆引きドメインの両方が
 取れている場合はどちらを登録するか選べる）。
 
-#### 🔔 メール通知（mailman連携）
+#### 🔔 メール通知
 
 CRITICALアラート（抑制ルール・SSH許可リストを経てなお最終的にCRITICALのままの
-ものだけ）を、h-1で稼働している[mailman](https://github.com/hit1023/mailman)
-（`POST /send`、Resend経由の薄いメール送信API）経由でメール通知できる。
+ものだけ）を、社内の軽量メール送信API経由でメール通知できる。
 
 設定項目:
 
 - **通知を有効にする**（既定OFF）
 - **宛先メールアドレス**（カンマ区切りで複数指定可）
-- **送信元アドレス**（任意。省略時はmailman側の`DEFAULT_FROM`を使用）
-- **mailmanのエンドポイント**（既定`http://192.168.0.20:8765/send`、h-1への直接LAN内アクセス）
+- **送信元アドレス**（任意。省略時は送信API側の既定送信元を使用）
+- **送信APIのエンドポイント**
 
 「テスト送信」ボタンで、実際のアラートを経由せずその場で疎通確認ができる
 （`POST /api/notify-settings/test`、有効化トグルの状態に関わらず送信される）。
@@ -269,7 +275,7 @@ CRITICALアラート（抑制ルール・SSH許可リストを経てなお最終
 ### セットアップ手順
 
 1. Cloudflareダッシュボード → AI → **AI Gateway** で新規Gatewayを作成
-   （現在の値: gateway名 `sentinel`、認証はOFFにしてある。理由は下記「制約」参照）
+   （認証はOFFにしてある。理由は下記「制約」参照）
 2. **My Profile → API Tokens** で「Workers AI」テンプレートのトークンを発行
    （`Account.Workers AI:Read` + `Edit`）
 3. 各ホストの`.env`に以下を設定:
@@ -277,9 +283,8 @@ CRITICALアラート（抑制ルール・SSH許可リストを経てなお最終
    CF_AI_GATEWAY_TOKEN=<発行したトークン>
    ```
 4. `app/config.yaml`の`ai_triage`セクションで`enabled: true`、
-   `cloudflare_account_id` / `cloudflare_gateway_id`を設定（既に設定済み、非秘密情報
-   なのでgit管理下に置いている）
-5. `docker compose up -d --build`
+   `cloudflare_account_id` / `cloudflare_gateway_id`を設定
+5. `docker compose up -d --build`（またはネイティブインストーラで再起動）
 
 ### 設計上の注意点
 
@@ -294,7 +299,7 @@ CRITICALアラート（抑制ルール・SSH許可リストを経てなお最終
 - **User-Agent偽装が必須**: CloudflareエッジがPython標準ライブラリ`urllib`の既定
   User-Agentをボットとして`HTTP 403 (error code: 1010)`でブロックするため、
   `ai_triage.py`内でブラウザ風のUser-Agentヘッダーを明示的に付けている
-  （これも実際にハマって直した箇所。ここを消すと突然AIトリアージが全滅するので注意）。
+  （これを消すと突然AIトリアージが全滅するので注意）。
 
 ## WebUI（ダッシュボード）
 
@@ -303,27 +308,24 @@ CRITICALアラート（抑制ルール・SSH許可リストを経てなお最終
 - 動くパーティクルネットワーク背景（`netbg.js`、canvas自作、外部ライブラリ不使用）
 - 瞬きする目のロゴ（SVG、`eye-blink-group`を上下に潰す/戻すアニメーションで
   「まぶたを重ねて隠す」のではなく「実際に目が閉じる」ように見せている）
-- 上から下へ流れる細いスキャンライン（s-quad.com風、`.scan-sweep`）
-- ターミナル風のライブフィード（macOS風3色ドット、`> _`点滅カーソル）
+- 上から下へ流れる細いスキャンライン（`.scan-sweep`）
+- ターミナル風のライブフィード（macOS風3色ドット、`> _`点滅カーソル、タイトルバー
+  クリックで折りたたみ可能。折りたたみ中も最新1件をタイトルバーに1行プレビュー表示）
 - CRITICAL検知時の画面全体フラッシュ + 該当統計カードの光るアニメーション
-- 各統計値のリアルタイムスパークライン（棒グラフ、canvas自作）とCPU波形チャート
-  （ベジェ曲線、全ホスト平均）
+- 各統計値のリアルタイムスパークライン（棒グラフ、canvas自作）
 
 機能面:
 
 - **マルチホスト表示**: フィード各行にホストバッジ、「HOSTS」パネルに全ホストの
-  オンライン/オフライン・CPU/MEM・**ホストごとのCPU/MEM推移ミニスパークライン**、
-  ヘッダーに「オンライン数/全ホスト数」バッジ。全ホスト平均の波形チャートは
-  「個々のホストの傾向が分からずスペースの無駄」というフィードバックで廃止し、
-  ホスト別のミニグラフに一本化した
+  オンライン/オフライン・CPU/MEM・**ホストごとのCPU/MEM推移ミニスパークライン**・
+  **エージェントのバージョンバッジ**、ヘッダーに「オンライン数/全ホスト数」バッジ
 - **24H ACTIVITY HEATMAP**: 直近24時間を1時間単位のマスに分け、その時間帯の最も
   重い重大度（critical > warning > info）で色を決め、件数に応じて濃淡を付けた
   GitHubのコントリビューショングラフ風の一覧。**ホストごとに行を分けて表示**する
   （全ホスト合算だと、特定の1台だけが荒れている状況が他ホストの数字に埋もれて
   しまうため）。バックエンドは`/api/stats`の`heatmap_by_host`フィールド
   （ホスト名 → 24件の`{hour_start, critical, warning, info}`配列、のマップ）。
-  横幅を取りすぎるとの指摘で、「TOP UNKNOWN PROCESSES」パネルと2カラムで
-  半分の幅に並べている
+  「TOP UNKNOWN PROCESSES」パネルと2カラムで半分の幅に並べている
 - **TOP UNKNOWN PROCESSES (24H)**: procnet_watchのメッセージから`name=`パターンで
   プロセス名を抜き出し、頻出順に棒グラフ表示。`known_process_keywords`を
   チューニングする際、どのプロセスを許可リストに足すべきかの判断材料になる。
@@ -333,39 +335,40 @@ CRITICALアラート（抑制ルール・SSH許可リストを経てなお最終
   発信元IPを多い順に表示。バックエンドは`/api/stats`の`top_auth_ips`
 - **統計カードクリックでフィルタ**: CRITICAL/WARNING/INFOカードクリックでその重大度
   だけに、PROCESSES/LISTEN PORTSカードクリックで`procnet_watch`カテゴリだけに
-  フィードを絞り込む。TOTAL ALERTSカードで解除。同じカード再クリック、または
-  フィード上部の「FILTER: ◯◯ ✕」チップでもトグル解除できる
-  （実装: `app.js`の`allAlerts`配列に生データを保持し、`activeFilter`に応じて
-  再描画する方式。WebSocketで届く新規アラートもフィルタ条件に合わないものは
-  DOM追加をスキップする）
+  フィードを絞り込む。TOTAL ALERTSカードで解除。**CRITICAL/WARNINGでフィルタした
+  場合はSQLiteの長期保存データ（過去ログ全件）を取得して表示する**ため、統計カード
+  の件数とフィード表示件数が一致する（フィルタチップに「(過去ログ全件)」と表示）
 - **AI LATEST VERDICTバナー**: 最新のAIトリアージ結果（非脅威判定を除く）をヘッダー
   直下に常時表示
+- 全ての表示時刻はJST固定で生成される（サーバーのシステム時刻がUTCでも正しく
+  JST表示になる。詳細は「教訓」節）
 - 認証機能は**現状なし**。LAN内利用が前提。外部公開する場合は
-  nginx-proxy-manager等でリバースプロキシ＋認証を挟むこと。
+  リバースプロキシ＋認証を挟むこと。
 
 ### バックエンドAPI（`webui/main.py`）
 
 | エンドポイント | 用途 |
 |---|---|
 | `POST /api/ingest/alert` | エージェントからのアラート受信（`Authorization: Bearer <INGEST_TOKEN>`） |
-| `POST /api/ingest/status` | エージェントからの状態スナップショット受信 |
+| `POST /api/ingest/status` | エージェントからの状態スナップショット受信（`agent_version`を含む） |
 | `GET /api/alerts?limit=&host=` | 直近アラート取得（ホスト絞り込み可） |
 | `GET /api/stats` | 24時間集計・全ホストの状態・カテゴリ内訳 |
 | `GET /api/hosts` | ホスト一覧とオンライン判定（`HOST_STALE_SECONDS`、既定300秒） |
-| `GET /api/alerts/history?severity=&host=&since_epoch=&limit=` | **長期監査用**。CRITICAL/WARNING（元severity基準、AI格下げ後も含む）だけをSQLiteから検索 |
+| `GET /api/alerts/history?severity=&host=&category=&since_epoch=&limit=` | **長期監査用**。CRITICAL/WARNING（元severity基準、AI格下げ後も含む）だけをSQLiteから検索 |
 | `WS /ws/alerts` | `alerts.jsonl`の追記をtailしてリアルタイム配信 |
 
 ### データ永続化の設計（2層構成）
 
 - **`data/alerts.jsonl`**: 全重大度（info含む）の生ログ。追記オンリー、直近tail表示・
-  WebSocket配信用。`/api/stats`等は末尾5000行だけ読むため、長期間ではINFOの多さに
+  WebSocket配信用。フィード表示は末尾の一定件数だけを読むため、長期間ではINFOの多さに
   埋もれて古いCRITICALが実質検索不能になる。
 - **`data/alerts_important.db`（SQLite）**: **元severityがcritical/warningだったものだけ**
   を`id`をキーに永続保存（AIが非脅威判定して`info`に格下げしたものも`original_severity`で
   拾って残す）。ホスト・重大度・期間で検索できる`/api/alerts/history`から利用する。
-  INFOを含めなかったのは、頻度が高く監査価値も低いため、SQLite化の恩恵よりファイル肥大化の
-  デメリットが上回ると判断したため。将来INFOも保存したくなった場合は
-  `webui/main.py`の`PERSIST_SEVERITIES`に`"info"`を足すだけでよい。
+  統計カード（CRITICAL/WARNING/24Hヒートマップ等）もこちらを正として集計する
+  （jsonl側の末尾N件制限による集計漏れを避けるため）。INFOを含めなかったのは、
+  頻度が高く監査価値も低いため、SQLite化の恩恵よりファイル肥大化のデメリットが
+  上回ると判断したため。
 
 ## セットアップ・新規ホスト追加
 
@@ -378,11 +381,11 @@ GitHub Releasesで配布している単一バイナリをsystemd(Linux)/launchd(
 ```bash
 # Linux
 curl -fsSL https://raw.githubusercontent.com/hit1023/sentinel/main/install-native.sh -o install-native.sh
-sudo bash install-native.sh --webui-url http://192.168.0.18:8877 --token <共有トークン> --host-label server-01
+sudo bash install-native.sh --webui-url http://<マネージャーのアドレス>:8877 --token <共有トークン> --host-label <このホストの表示名>
 
 # macOS
 curl -fsSL https://raw.githubusercontent.com/hit1023/sentinel/main/install-macos.sh -o install-macos.sh
-sudo bash install-macos.sh --webui-url http://192.168.0.18:8877 --token <共有トークン> --host-label mac-mini
+sudo bash install-macos.sh --webui-url http://<マネージャーのアドレス>:8877 --token <共有トークン> --host-label <このホストの表示名>
 ```
 
 - 対応OS/アーキテクチャ: Linux(x86_64)、macOS(Apple Silicon/Intel両対応)。Windowsは今後の課題。
@@ -394,28 +397,17 @@ sudo bash install-macos.sh --webui-url http://192.168.0.18:8877 --token <共有�
   レベルであり、ネイティブ化によって権限が絞られるわけではない点に注意）。
 - macOSは未署名バイナリのためGatekeeperの検疫属性を`xattr -d com.apple.quarantine`で
   インストーラが自動的に外す。コード署名・公証(notarization)は今後の課題。
-- gate WebUIの「⚙ 設定」→「⬇ ダウンロード」タブから、過去バージョンも含めて
-  インストーラをダウンロードできる。
 
-新しいバージョンをリリースする手順（開発者向け）:
-```bash
-# app/VERSION を新しいバージョン番号に書き換えてコミットした後
-git tag v0.2.0
-git push origin v0.2.0
-```
-タグをpushすると`.github/workflows/release.yml`が起動し、Linux/macOS(arm64/x86_64)
-向けバイナリをビルドしてGitHub Releasesに自動公開する。
-
-### `install.sh`（Docker版、既存ホスト向け）
+### `install.sh`（Docker版）
 
 ```bash
 git clone git@github.com:hit1023/sentinel.git hit-linux-ids
 cd hit-linux-ids
 ./install.sh                  # 対話形式（エージェントのみ）
-./install.sh --server          # 司令塔WebUIも同居させる場合（通常はgateだけ）
+./install.sh --server          # マネージャーも同居させる場合
 ```
 
-対話で聞かれる項目: 司令塔WebUIのURL、共有Ingestトークン、ホスト表示名、
+対話で聞かれる項目: マネージャーのURL、共有Ingestトークン、ホスト表示名、
 （任意で）Cloudflare AI Gatewayトークン。`.env`の作成→そのホストの現在の
 リスニングポート一覧の表示（`config.yaml`調整の参考用）→`docker compose up -d --build`
 まで自動で行う。
@@ -423,40 +415,53 @@ cd hit-linux-ids
 非対話（自動化向け）:
 ```bash
 ./install.sh --non-interactive \
-  --webui-url http://192.168.0.18:8877 \
+  --webui-url http://<マネージャーのアドレス>:8877 \
   --token <共有トークン> \
-  --host-label h-1
+  --host-label <このホストの表示名>
 ```
 
 ### 手動セットアップ
 
 `install.sh`を使わない場合、`.env`を手動で用意して`docker compose up -d --build`
-（司令塔ホストなら`--profile server`を追加）するだけでよい。`.env`の内容は
+（マネージャーホストなら`--profile server`を追加）するだけでよい。`.env`の内容は
 [config.yamlリファレンス](#configyaml-リファレンス)を参照。
 
 ### 新規ホストのチェックリスト
 
-1. リポジトリをclone（読み取り専用deploy key推奨。gateには`sentinel-ai-triage`用とは
-   別に、GitHubリポジトリ自体のread-only deploy keyを`~/.ssh/id_ed25519_sentinel`に
-   設置し、`~/.ssh/config`に`github.com-sentinel`エイリアスを作ってある。他ホストへ
-   展開する場合も同様の専用deploy key方式を推奨）
+1. リポジトリをclone（読み取り専用deploy key推奨）
 2. `.env`を作成（`install.sh`推奨）
 3. `app/config.yaml`の`procnet_watch.known_listen_ports` / `known_process_keywords`を
    そのホストの実構成に合わせて調整（`ss -tlnp` / `docker ps`で確認）
-4. **重要**: このホストがCI/CD対象外（gate以外）の場合、`config.yaml`をホスト固有に
-   編集したら`git update-index --skip-worktree app/config.yaml`しておくこと。
+4. **重要**: このホストがCI/CD対象外（マネージャー以外）の場合、`config.yaml`を
+   ホスト固有に編集したら`git update-index --skip-worktree app/config.yaml`しておくこと。
    でないと次回`git pull`時にマージ処理が走り、意図せず衝突・上書きの可能性がある
-   （gateは`git reset --hard`で強制上書きするCI方式なので、そもそも
+   （マネージャーは`git reset --hard`で強制上書きするCI方式なので、そもそも
    ホスト固有の値は`config.yaml`に書かず`.env`に書く設計にしてある。詳細は
    `app/config.yaml`冒頭のコメントおよび下記「既知の制約」参照）
-5. `docker compose up -d --build`
-6. 司令塔WebUIの「HOSTS」パネルに新しいホストが緑ドットで現れれば成功
+5. `docker compose up -d --build`（またはネイティブインストーラ実行）
+6. マネージャーの「HOSTS」パネルに新しいホストが緑ドットで現れれば成功
+
+## エージェントのバージョニング・配布
+
+エージェントは`app/VERSION`でバージョン管理されており、タグをpushすると
+GitHub Actions（`.github/workflows/release.yml`）がLinux/macOS(arm64/x86_64)向けの
+単一バイナリを自動ビルドし、GitHub Releasesに公開する。
+
+新しいバージョンをリリースする手順:
+```bash
+# app/VERSION を新しいバージョン番号に書き換えてコミットした後
+git tag v0.2.0
+git push origin v0.2.0
+```
+
+ビルド成果物には、バイナリ本体・`config.yaml`のサンプル・systemd unit/launchd plist・
+インストーラスクリプトが同梱される。`install-native.sh` / `install-macos.sh`は
+GitHub Releasesから最新（または指定バージョン）のアセットを取得して展開する。
 
 ## CI/CD
 
-**gateのみ**自動デプロイ対象。`main`ブランチへのpushで、gate上の自己ホスト
-GitHub Actionsランナー（ラベル: `sentinel`、他プロジェクトのDrift/i-was-hereと
-同じ方式）が以下を実行する（`.github/workflows/deploy.yml`）:
+**マネージャーホストのみ**自動デプロイ対象。`main`ブランチへのpushで、マネージャー上の
+自己ホストGitHub Actionsランナーが以下を実行する（`.github/workflows/deploy.yml`）:
 
 ```
 git fetch origin main && git reset --hard origin/main
@@ -464,34 +469,9 @@ docker compose --profile server up -d --build
 curl -sf http://localhost:8877/api/stats  # ヘルスチェック
 ```
 
-h-1・Mac mini等のエージェント専用ホストは対象外。コード更新は手動で
-`git pull && docker compose up -d --build`（h-1のように`config.yaml`を
-skip-worktreeにしている場合は`git pull`が安全）。
-
-### gateの初期セットアップ済み事項
-
-- `~/docker/hit-linux-ids`をgit cloneで配置（`~/.ssh/id_ed25519_sentinel`という
-  専用read-only deploy key経由、`~/.ssh/config`に`github.com-sentinel`エイリアス）
-- `~/actions-runner-sentinel/`にGitHub Actions self-hosted runnerをsystemdサービス
-  として常駐（`actions.runner.hit1023-sentinel.gate-sentinel.service`）
-- ランナーの登録トークンは`gh api -X POST repos/hit1023/sentinel/actions/runners/registration-token`
-  で発行したもの（有効期限があるため、再セットアップが必要な場合は再発行すること）
-
-## 現在デプロイ済みの環境
-
-| ホスト | 役割 | 備考 |
-|---|---|---|
-| gate (192.168.0.18) | 司令塔WebUI + エージェント | CI/CD対象。ポート8877で公開 |
-| h-1 (192.168.0.20) | エージェントのみ | `config.yaml`をskip-worktree化済み |
-| Mac mini | エージェントのみ | Docker Desktopの制約あり（下記参照） |
-
-3ホスト共通のCloudflareリソース:
-- AI Gateway: account_id `a02903a62c568fcf8fd62fc7bef36aa0` / gateway `sentinel`
-- Workers AI用トークン: `sentinel-ai-triage`という名前で発行済み（各ホストの
-  `.env`の`CF_AI_GATEWAY_TOKEN`にコピー配布済み）
-
-共有Ingestトークンは3ホストの`.env`の`CENTRAL_INGEST_TOKEN`にコピー配布済み
-（値そのものはこのMarkdownには書かない。各ホストの`.env`を参照）。
+エージェント専用ホストは対象外。コード更新は手動で
+`git pull && docker compose up -d --build`（`config.yaml`をskip-worktreeにしている
+場合は`git pull`が安全）、またはネイティブ運用ならインストーラの再実行/自動更新機能を使う。
 
 ## config.yaml リファレンス
 
@@ -502,8 +482,8 @@ skip-worktreeにしている場合は`git pull`が安全）。
 | キー | 既定値 | 説明 |
 |---|---|---|
 | `interval_seconds` | 60 | 監視ループの間隔（秒） |
-| `central.enabled` | true | 中央WebUIへの送信を有効化するか |
-| `central.webui_url` | "" | **.envの`CENTRAL_WEBUI_URL`推奨**。司令塔のURL |
+| `central.enabled` | true | マネージャーへの送信を有効化するか |
+| `central.webui_url` | "" | **.envの`CENTRAL_WEBUI_URL`推奨**。マネージャーのURL |
 | `central.ingest_token` | "" | **.envの`CENTRAL_INGEST_TOKEN`推奨** |
 | `central.host_label` | "" | **.envの`CENTRAL_HOST_LABEL`推奨**。空ならOSホスト名 |
 | `auth_watch.fail_threshold` | 5 | ブルートフォース判定の失敗回数閾値 |
@@ -512,7 +492,7 @@ skip-worktreeにしている場合は`git pull`が安全）。
 | `auth_watch.use_journalctl` | false | trueならjournalctl方式（journalマウントも要有効化） |
 | `auth_watch.sensitive_users` | root, admin, administrator, ubuntu | これらのユーザーへの失敗ログインは閾値未満でも即WARNING |
 | `auth_watch.geoip_enabled` | true | GeoIP+逆引き+見慣れない国からのログイン検知を有効化 |
-| `integrity_watch.watch_paths` | `/etc`, `/root/.ssh`等 | 整合性監視対象（コンテナ内は`/hostfs`配下、globパターン可） |
+| `integrity_watch.watch_paths` | `/etc`, `/root/.ssh`等 | 整合性監視対象（globパターン可） |
 | `integrity_watch.critical_patterns` | `*/.ssh/*` | 一致パスは新規/削除/改ざんいずれも即CRITICAL |
 | `procnet_watch.known_listen_ports` | （ホストごとに要調整） | 既知ポート一覧 |
 | `procnet_watch.known_process_keywords` | （ホストごとに要調整） | 既知プロセス名（部分一致） |
@@ -520,14 +500,16 @@ skip-worktreeにしている場合は`git pull`が安全）。
 | `outbound_watch.known_outbound_ports` | 80, 443, 53, 123, 22, 853 | LAN外へのこのポート宛通信は正常扱い |
 | `outbound_watch.suspicious_ports` | 4444, 1337, 6666, 6667, 31337, 12345, 54321 | 一致したら閾値なしで即CRITICAL |
 | `outbound_watch.local_service_ports` | （main.pyがprocnet_watch.known_listen_portsから自動継承、手動設定不要） | このホストが公開しているサービスのポート。着信をここへの「外向き通信」と誤判定しないための除外リスト |
-| `notify.webhook_url` / `webhook_token` | "" | mailman/pushman等への転送用（任意） |
+| `notify.webhook_url` / `webhook_token` | "" | 既存の通知APIへの転送用（任意） |
 | `ai_triage.enabled` | true | AIトリアージを使うか |
 | `ai_triage.trigger_severities` | critical, warning | トリアージ対象の重大度 |
-| `ai_triage.cloudflare_account_id` / `cloudflare_gateway_id` | 設定済み | 非秘密情報 |
+| `ai_triage.cloudflare_account_id` / `cloudflare_gateway_id` | 各自の値を設定 | Cloudflareダッシュボードで確認 |
 | `ai_triage.model` | `@cf/meta/llama-3.1-8b-instruct-fast` | Workers AIモデル名 |
 | `ai_triage.api_token` | "" | **.envの`CF_AI_GATEWAY_TOKEN`推奨** |
 | `ai_triage.timeout_seconds` | 8 | Gateway呼び出しのタイムアウト |
 | `ai_triage.auto_dismiss_non_threats` | true | 非脅威判定を自動でINFOへ格下げするか |
+| `updater.enabled` | true | 新バージョンの検知を有効化するか |
+| `updater.auto_apply` | false | 新バージョンを自動適用するか（既定は通知のみ） |
 
 ## 既知の制約・ハマりどころ
 
@@ -538,16 +520,12 @@ skip-worktreeにしている場合は`git pull`が安全）。
   全ロケーションから一度ずつログインしてベースラインを育てておくか、誤検知が出たら
   Suppression機能（`category: auth_watch`、パターンに国名を含める）で黙らせるとよい。
 - **ip-api.comの無料枠はHTTPのみ・レート制限あり**（45リクエスト/分）。`geoip.py`が
-  IPごとに結果を`/data/geoip_cache.json`へ永続キャッシュすることで通常運用では
-  問題にならないが、短時間に大量の新規IPからアクセスが来る状況（DDoS等）では
-  レート制限に達し、それ以降の問い合わせは黙って失敗する（`location`が付かないだけで
-  検知自体は継続する）。
-- **Mac(Docker Desktop)での`network_mode: host`**: 実際のmacOSホストではなく、
-  Docker Desktopが内部で使うLinux VMを見ることになる。Mac miniを「エージェントの
-  1台」として動かしても、見えるのはあくまでVM内部の状態（学習・動作確認用途と
-  割り切って使う）。また、同じ理由でVM内`localhost`は「そのホスト自身」を指さない
-  ため、Mac上でagentとwebuiを同居させても`localhost:8877`には到達できない
-  （外部LAN IPへの接続は問題ない）。
+  IPごとに結果を永続キャッシュすることで通常運用では問題にならないが、短時間に大量の
+  新規IPからアクセスが来る状況（DDoS等）ではレート制限に達し、それ以降の問い合わせは
+  黙って失敗する（`location`が付かないだけで検知自体は継続する）。
+- **Docker Desktop（macOS）での`network_mode: host`**: 実際のmacOSホストではなく、
+  Docker Desktopが内部で使うLinux VMを見ることになる。この制約はネイティブ常駐化
+  （systemd/launchd）で完全に解消される。
 - **WebUIに認証機能なし**: LAN内利用が前提。外部公開するならリバースプロキシで
   認証を挟むこと。
 - **AI Gatewayの認証はOFF**: Gateway作成時に「認証済みゲートウェイ」をOFFにしている
@@ -558,52 +536,76 @@ skip-worktreeにしている場合は`git pull`が安全）。
 - **AIトリアージのコスト**: procnet_watchの初回スキャンや大量の未知プロセス検知時、
   トリアージ対象（critical/warning）が多いとWorkers AIへのリクエストが急増する。
   現状レート制限やコスト上限の仕組みは未実装。
+- **fail2ban等のOS標準対策は別途導入を推奨**: SENTINELは検知に特化しており、
+  自動遮断は行わない（誤検知でホスト自身のSSHが締め出されるリスクを避けるため）。
+  実運用ではSSH公開ホストにfail2ban等のブルートフォース対策を別途入れることを推奨する。
 
 ## これまでに踏んだバグと直し方（教訓）
 
 実装中に実際に発生し、修正したバグ。同種の問題を作り込まないための参考に:
 
-1. **auth_watch初回起動時のログ全読み込み** — 51MBの既存`auth.log`を最初から
-   読んでしまい、過去の全ログイン成功(約6万件)を通知してしまった。
+1. **auth_watch初回起動時のログ全読み込み** — 数十MB規模の既存`auth.log`を最初から
+   読んでしまい、過去の全ログイン成功（数万件規模）を通知してしまった。
    → 初回はファイル末尾から監視開始するよう修正（`_iter_new_lines_from_file`）。
 2. **procnet_watchのCPU%が数千%になる誤検知** — `psutil.process_iter()`の
    attrsに`"cpu_percent"`を含めると、その場での内部計測と直後の
    `p.cpu_percent(interval=None)`呼び出しがほぼ無時間差の二重計測になり、
-   OSのクロック粒度の丸め誤差で`17577.8%`のような荒唐無稽な値が出た。
+   OSのクロック粒度の丸め誤差で荒唐無稽な値が出た。
    → attrsから`cpu_percent`を除去し1回だけ計測。念のためCPUコア数×100%を
    超える値は無視するガードも追加。
-   （副次的な発見: AIがこの壊れた数字`17577.8%`を要約する際、桁を見誤って
-   `175.78%`と書いてしまう事例も確認。生データが壊れているとAIの要約も
-   信頼できない、という実例）
+   （副次的な発見: AIがこの壊れた数字を要約する際、桁を見誤ることも確認。
+   生データが壊れているとAIの要約も信頼できない、という実例）
 3. **Cloudflare AI GatewayがHTTP 403 (error code: 1010)で全滅** — Python
    `urllib`の既定User-Agentがボットとしてブロックされていた。
    → ブラウザ風User-Agentを明示的に設定（`ai_triage.py`）。
-4. **Mac Docker Desktopの`network_mode: host`が実ホストを共有しない** —
-   ローカルテスト時、コンテナ内`localhost`から同ホストのWebUIに到達できず
-   `Connection refused`。実Linuxホスト(gate)では問題なし。上記「既知の制約」参照。
-5. **`.env`の反映漏れ** — gateへ`central`関連の環境変数を追記した直後にCIが
-   `docker compose up`済みだったため、コンテナが古い`.env`のまま起動していた。
+4. **Docker Desktop(macOS)の`network_mode: host`が実ホストを共有しない** —
+   ローカルテスト時、コンテナ内`localhost`から同ホストのマネージャーに到達できず
+   `Connection refused`。実Linuxホストでは問題なし。ネイティブ常駐化で解消。
+5. **`.env`の反映漏れ** — 環境変数追加直後にCIが`docker compose up`済みだったため、
+   コンテナが古い`.env`のまま起動していた。
    → `.env`変更後は`docker compose up -d --force-recreate`が必要な場合がある
    （docker composeは`.env`を`up`実行時にしか読まない）。
 6. **outbound_watchが着信を外向き通信と誤検知** — `psutil.net_connections()`の
-   `ESTABLISHED`接続は通信の向きを区別せず、gateが公開しているWebサービス
-   （nginx-proxy-manager等）への外部からの正常なアクセスも`raddr`に相手の
-   ランダムな送信元ポートが入るだけで拾ってしまい、「未登録ポートへの外向き
-   通信」として誤検知していた（同一IPから毎回異なるポート番号で複数回検知、
-   という挙動が手がかりになった）。
+   `ESTABLISHED`接続は通信の向きを区別せず、自ホストが公開しているWebサービスへの
+   外部からの正常なアクセスも`raddr`に相手のランダムな送信元ポートが入るだけで
+   拾ってしまい、「未登録ポートへの外向き通信」として誤検知していた（同一IPから
+   毎回異なるポート番号で複数回検知、という挙動が手がかりになった）。
    → ローカル側ポート(`c.laddr.port`)が自ホストの公開サービスのポート
    （`procnet_watch.known_listen_ports`を継承）、または1024未満のwell-knownな
    ポートであれば「着信」とみなしてスキップするよう修正（`local_service_ports`）。
+7. **CRITICAL/WARNING統計がjsonlの末尾N件制限で取りこぼされる** — 統計・ヒートマップの
+   集計がjsonlの末尾数千行だけを読む実装だったため、procnet_watch等の大量の
+   WARNING/INFOでウィンドウが埋まると、実際には発生している古いCRITICALが集計から
+   漏れ、ダッシュボード上は「CRITICAL 0件」に見えてしまうことがあった。
+   → CRITICAL/WARNINGは既にSQLiteに全件永続化されているため、統計・ヒートマップ・
+   フィルタ結果はすべてSQLite側を正として集計・取得するよう統一した。
+8. **SQLite保存漏れ（AIが脅威と判定した最重要アラートほど保存されない逆転バグ）** —
+   エージェント側は「AIが非脅威と判定して格下げした場合だけ元の重大度を送る」設計で、
+   格下げしなかった場合は`original_severity`を明示的に`None`として送っていた。
+   マネージャー側の受信処理が`dict.get(key, default)`でこれを受けていたが、
+   Pythonの`dict.get`は**キーが値`None`で存在する場合はdefaultを使わない**仕様のため、
+   `original_severity`が`None`のまま扱われ、SQLite保存条件に一致せず弾かれていた。
+   結果、AIが「非脅威」と判定したどうでもいいアラートだけが保存され、AIが本当に
+   脅威と判定した重要なアラートほど保存されない、という完全に逆転した状態になっていた。
+   → 受信側を`record.get(key) or default`という明示的なfalsyチェックに変更。
+   同種のパターンが抑制ルール・ホワイトリスト適用処理にも存在しており、あわせて修正。
+   **教訓**: `.get(key, default)`は「キーが無い」場合のフォールバックであり、
+   「値がNoneかもしれない」場合のフォールバックには使えない。
+9. **サーバー時刻がUTCのため表示時刻が9時間ずれる** — ホストのシステム時刻が
+   UTCで動いている環境では、タイムスタンプ生成にシステムのローカルタイムを使う
+   実装だと、実際の時刻より9時間遅れて表示されてしまう。
+   → コンテナのTZ環境変数に頼らず、Python側でJST固定のtimezoneオブジェクトを
+   明示的に使う方式に変更。複数ホスト・複数実行環境をまたぐ場合は、OS側のタイムゾーン
+   設定に依存せずアプリケーション側で明示指定する方が確実。
 
 ## 今後の拡張候補
 
-- Fail2ban的な自動遮断（iptables/nftables操作）は未実装。検知のみで自動対処は
-  しない設計（誤検知でホスト自身のSSHが締め出されるリスクを避けるため）。
+- Windows向けエージェントの実装（現状はLinux/macOSのみ対応）。
+- WebUIからのインストーラダウンロードページ（過去バージョンも選択可能）。
+- エージェントの自動更新機能（新バージョン検知の通知は実装済み、自動適用は今後）。
 - Dockerコンテナ自体の異常（想定外イメージの起動等）を`docker.sock`経由で
   監視する拡張。
 - AIトリアージのレート制限・コスト上限（Workers AI呼び出し回数が青天井）。
-- h-1・Mac mini等のエージェント専用ホストもCI/CD対象にする（自己ホストランナーの
-  追加、またはgateからのSSHデプロイ等）。
 - WebUIへの認証機能追加（現状LAN内・信頼境界内での利用が前提）。
 - ホストがオフラインになったこと自体をアラートとして扱う（現状は「HOSTS」パネルの
   表示が変わるだけで、通知としては発火しない）。
