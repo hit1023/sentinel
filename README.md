@@ -267,6 +267,10 @@ CRITICALアラート（抑制ルール・SSH許可リストを経てなお最終
 （メール送信の失敗・遅延がアラート取り込み自体をブロックしないようにするため）。
 設定は`app_settings`テーブル（`GET/POST /api/notify-settings`）に保存される。
 
+既定は無効（`ai_triage.enabled: false`）。account_id/gateway_id/api_tokenの
+いずれかが未設定の場合も自動的にスキップされ、AIなしの従来どおりの通知になる
+（`app/ai_triage.py`の`should_triage()`参照）。使いたい場合のみ以下を設定する。
+
 ### セットアップ手順
 
 1. Cloudflareダッシュボード → AI → **AI Gateway** で新規Gatewayを作成

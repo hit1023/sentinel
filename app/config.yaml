@@ -170,14 +170,19 @@ notify:
 # CRITICAL/WARNINGアラート発生時、生ログをLLMに渡して日本語1〜2文の
 # トリアージコメント（何が起きたか・緊急度・次の一手）を自動生成しフィードに添える。
 ai_triage:
-  enabled: true
+  # 既定はOFF。account_id/gateway_id/api_tokenのいずれかが未設定でも
+  # 自動的にAIトリアージはスキップされ従来どおり通知されるが（app/ai_triage.pyの
+  # should_triage()参照）、明示的にoptしてもらうため既定値はfalseにしている。
+  # 使う場合はCloudflareダッシュボード → AI → AI Gateway でGatewayを作成し、
+  # 下記2項目を自分の値に書き換えたうえでtrueにすること。
+  enabled: false
   # このセキュリティレベルのアラートのみAIトリアージする（INFO等は対象外、コスト抑制のため）
   trigger_severities:
     - critical
     - warning
-  # Cloudflareダッシュボード → AI → AI Gateway で作成したGatewayの情報
-  cloudflare_account_id: "a02903a62c568fcf8fd62fc7bef36aa0"
-  cloudflare_gateway_id: "sentinel"
+  # Cloudflareダッシュボード → AI → AI Gateway で作成したGatewayの情報（各自の値に書き換える）
+  cloudflare_account_id: ""
+  cloudflare_gateway_id: ""
   # Workers AIのモデル名（軽量・高速なものを推奨）
   model: "@cf/meta/llama-3.1-8b-instruct-fast"
   # Workers AI権限を持つCloudflare APIトークン。
