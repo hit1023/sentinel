@@ -171,8 +171,11 @@ echo "  （/var/log/auth.logが存在しないディストロが増えている�
 echo
 
 # --- 起動 ---
+# 既に起動中の場合、enable --nowだけでは新しいバイナリを読み込まない
+# （activeなユニットへのstartは無処理のため）ので、restartで確実に反映する。
 systemctl daemon-reload
-systemctl enable --now sentinel-agent
+systemctl enable sentinel-agent
+systemctl restart sentinel-agent
 
 echo
 echo "✅ セットアップ完了（バージョン ${RESOLVED_TAG}）。"
