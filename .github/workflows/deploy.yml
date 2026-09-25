@@ -3,6 +3,8 @@ name: Deploy to gate
 on:
   push:
     branches: [main]
+    paths-ignore:
+      - 'docs/**'
   workflow_dispatch:  # 手動実行も可能
 
 jobs:
