@@ -522,8 +522,20 @@ function renderHostsList(hosts) {
       <span class="host-name">${escapeHtml(h.host || "unknown")}</span>
       <span class="host-metric">CPU ${cpu}</span>
       <span class="host-metric">MEM ${mem}</span>
+      <canvas class="host-spark" width="90" height="24"></canvas>
     `;
     container.appendChild(row);
+
+    // ホスト別のCPU推移をミニスパークラインで表示（履歴自体はhostCpuHistoryに
+    // 保持し続け、行を再描画するたびに新しいcanvas要素へ紐付け直して復元する）
+    const key = "host_" + (h.host || "unknown");
+    sparkCanvases[key] = row.querySelector(".host-spark");
+    if (!sparkHistory[key]) sparkHistory[key] = [];
+    if (h.cpu_percent != null) {
+      pushSparkValue(key, h.cpu_percent);
+    } else {
+      drawSparkline(key);
+    }
   }
 }
 

@@ -571,6 +571,7 @@ body.alert-critical .topbar {
 .host-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
 .host-name { flex: 1; color: #d7f6ff; font-weight: 700; letter-spacing: 0.5px; }
 .host-metric { color: var(--text-dim); font-size: 11px; }
+.host-spark { display: block; width: 90px; height: 24px; flex-shrink: 0; }
 .feed-line .msg { color: #d7f6ff; }
 
 .ai-note {
