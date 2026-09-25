@@ -74,6 +74,21 @@ class AuthWatcher:
             return None
         return geoip.format_location(info)
 
+    def _is_unusual_location_readonly(self, ip: str):
+        """失敗ログイン試行用。_check_unusual_locationと違い、ベースラインへの
+        書き込みは一切行わない（攻撃者が失敗を1回混ぜるだけでその国を「既知」に
+        されては意味がないため）。ベースライン未確立（起動直後）の間は判定しない。"""
+        if not self.geoip_enabled:
+            return None
+        info = geoip.lookup(ip)
+        country = info.get("country") or ""
+        if not country:
+            return None
+        known = set(self._state.get("known_countries", []))
+        if not known or country in known:
+            return None
+        return geoip.format_location(info)
+
     def _save_state(self):
         os.makedirs(os.path.dirname(STATE_PATH), exist_ok=True)
         with open(STATE_PATH, "w", encoding="utf-8") as f:
@@ -157,6 +172,17 @@ class AuthWatcher:
                     f"要注意ユーザーへのログイン失敗: user={user} from={ip}{self._location_suffix(ip)}",
                     "warning",
                 )
+            else:
+                # ブルートフォース閾値未満・要注意ユーザーでもない、通常なら無音になる
+                # 失敗試行でも、見慣れない国からであればWARNINGで知らせる
+                unusual = self._is_unusual_location_readonly(ip)
+                if unusual:
+                    self.notifier.alert(
+                        "auth_watch",
+                        f"見慣れないロケーションからのログイン試行（失敗）: "
+                        f"user={user} from={ip} location={unusual}",
+                        "warning",
+                    )
             return
 
         m = INVALID_USER_RE.search(line)

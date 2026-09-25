@@ -56,6 +56,12 @@ function buildAlertElement(a) {
   const suppressBtn = canSuppress
     ? `<span class="suppress-btn" title="今後、同じパターンのアラートを自動的にINFO扱いにする">✕ 誤検知</span>`
     : "";
+  // auth_watchのアラートでIPが抽出できる場合、そのIP/ドメインをワンクリックで
+  // SSH許可リストへ登録できるボタンを出す（見慣れないロケーション判定の即時鎮静用）
+  const detected = a.category === "auth_watch" && !a.suppressed ? extractAuthSource(a.message) : null;
+  const whitelistBtn = detected
+    ? `<span class="suppress-btn whitelist-quick-btn" title="このIP/ドメインをSSH許可リストに追加">✓ 許可リストへ</span>`
+    : "";
   div.innerHTML =
     `<div class="feed-line-main">` +
     `<span class="sev-icon">${SEV_ICON[sevClass] || "●"}</span>` +
@@ -66,6 +72,7 @@ function buildAlertElement(a) {
     suppressedBadge +
     `<span class="msg">${escapeHtml(a.message || "")}</span>` +
     `<div class="spacer"></div>` +
+    whitelistBtn +
     suppressBtn +
     `</div>` +
     aiLine;
@@ -73,12 +80,49 @@ function buildAlertElement(a) {
     div.classList.add("dismissed");
   }
   if (canSuppress) {
-    div.querySelector(".suppress-btn").addEventListener("click", (e) => {
+    div.querySelector(".suppress-btn:not(.whitelist-quick-btn)").addEventListener("click", (e) => {
       e.stopPropagation();
       openSuppressPrompt(a);
     });
   }
+  if (detected) {
+    div.querySelector(".whitelist-quick-btn").addEventListener("click", (e) => {
+      e.stopPropagation();
+      openWhitelistQuickAdd(detected);
+    });
+  }
   return div;
+}
+
+function extractAuthSource(message) {
+  message = message || "";
+  const ipMatch = message.match(/from=([0-9a-fA-F:.]+)/);
+  const domainMatch = message.match(/location=.*?\(([^)]+)\)/);
+  if (!ipMatch) return null;
+  return { ip: ipMatch[1], domain: domainMatch ? domainMatch[1] : null };
+}
+
+async function openWhitelistQuickAdd(detected) {
+  let entry = detected.ip;
+  if (detected.domain) {
+    const useDomain = window.confirm(
+      `IPアドレス「${detected.ip}」の代わりにドメイン「${detected.domain}」を登録しますか？\n` +
+        `OK = ドメインを登録 / キャンセル = IPアドレスを登録`
+    );
+    if (useDomain) entry = detected.domain;
+  }
+  if (!window.confirm(`SSH許可リストに「${entry}」を追加しますか？`)) return;
+  try {
+    await fetch("/api/ssh-whitelist", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ entry, label: "フィードから追加" }),
+    });
+    loadSshWhitelist();
+  } catch (e) {
+    console.error("SSH許可リストへのクイック登録に失敗", e);
+    alert("登録に失敗しました");
+  }
 }
 
 async function openSuppressPrompt(a) {
