@@ -14,6 +14,8 @@ from fastapi.staticfiles import StaticFiles
 
 # auth_watchのアラートメッセージから発信元IPを抜き出す（"from=IP" / "疑い: IP から"の2パターン）
 AUTH_IP_RE = re.compile(r"from=([0-9a-fA-F:.]+)|疑い: ([0-9a-fA-F:.]+) から")
+# procnet_watchのアラートメッセージから未知プロセス名を抜き出す（"name=X"パターン）
+PROC_NAME_RE = re.compile(r"name=(\S+)")
 
 DATA_DIR = os.environ.get("IDS_DATA_DIR", "/data")
 ALERTS_JSONL = os.path.join(DATA_DIR, "alerts.jsonl")
@@ -394,6 +396,17 @@ def api_stats():
             ip_counter[m.group(1) or m.group(2)] += 1
     top_auth_ips = [{"ip": ip, "count": c} for ip, c in ip_counter.most_common(10)]
 
+    # procnet_watchで頻出している未知プロセス名のランキング（known_process_keywordsを
+    # チューニングする際の判断材料。「未知のプロセスを検知: pid=... name=X cmd=...」から抽出）
+    proc_counter = Counter()
+    for a in last_24h:
+        if a.get("category") != "procnet_watch":
+            continue
+        m = PROC_NAME_RE.search(a.get("message", ""))
+        if m:
+            proc_counter[m.group(1)] += 1
+    top_processes = [{"name": name, "count": c} for name, c in proc_counter.most_common(10)]
+
     hosts_status = _read_hosts_status()
     hosts_out = []
     online_cpu = []
@@ -433,6 +446,7 @@ def api_stats():
         "by_category": dict(cat_counter),
         "heatmap_by_host": heatmap_by_host,
         "top_auth_ips": top_auth_ips,
+        "top_processes": top_processes,
         "server_time": now,
     }
 

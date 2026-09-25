@@ -248,7 +248,13 @@ AIの判定に頼らず、**人間が「これは脅威ではない」と一度�
   GitHubのコントリビューショングラフ風の一覧。**ホストごとに行を分けて表示**する
   （全ホスト合算だと、特定の1台だけが荒れている状況が他ホストの数字に埋もれて
   しまうため）。バックエンドは`/api/stats`の`heatmap_by_host`フィールド
-  （ホスト名 → 24件の`{hour_start, critical, warning, info}`配列、のマップ）
+  （ホスト名 → 24件の`{hour_start, critical, warning, info}`配列、のマップ）。
+  横幅を取りすぎるとの指摘で、「TOP UNKNOWN PROCESSES」パネルと2カラムで
+  半分の幅に並べている
+- **TOP UNKNOWN PROCESSES (24H)**: procnet_watchのメッセージから`name=`パターンで
+  プロセス名を抜き出し、頻出順に棒グラフ表示。`known_process_keywords`を
+  チューニングする際、どのプロセスを許可リストに足すべきかの判断材料になる。
+  バックエンドは`/api/stats`の`top_processes`
 - **認証失敗 発信元IPランキング (24H)**: auth_watchのアラートメッセージから
   `from=<ip>`パターンを正規表現で抜き出し、ログイン成功を除いた失敗試行の
   発信元IPを多い順に表示。バックエンドは`/api/stats`の`top_auth_ips`

@@ -316,7 +316,7 @@ body.alert-critical .topbar {
   margin-bottom: 18px;
 }
 
-.heatmap-panel { margin-bottom: 18px; min-height: 0; }
+.heatmap-panel { min-height: 0; overflow-x: auto; }
 .heat-host-row { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
 .heat-host-row:last-child { margin-bottom: 0; }
 .heat-host-label {

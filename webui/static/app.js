@@ -410,6 +410,7 @@ async function loadStats() {
     renderCategoryBars(data.by_category || {});
     renderHeatmap(data.heatmap_by_host || {});
     renderAuthIpRanking(data.top_auth_ips || []);
+    renderTopProcesses(data.top_processes || []);
   } catch (e) {
     console.error("stats取得に失敗", e);
   }
@@ -538,6 +539,26 @@ function renderHeatmap(heatmapByHost) {
     rowWrap.appendChild(heatRow);
     container.appendChild(rowWrap);
     renderHeatmapRow(heatRow, heatmapByHost[host]);
+  }
+}
+
+function renderTopProcesses(procs) {
+  const container = document.getElementById("topProcessesBars");
+  if (!container) return;
+  if (!procs.length) {
+    container.innerHTML = '<div class="mono-dim">直近24時間の検知はありません</div>';
+    return;
+  }
+  const max = Math.max(1, ...procs.map((p) => p.count));
+  container.innerHTML = "";
+  for (const { name, count } of procs) {
+    const row = document.createElement("div");
+    row.className = "bar-row";
+    row.innerHTML = `
+      <div class="bar-label"><span>${escapeHtml(name)}</span><span>${count}</span></div>
+      <div class="bar-track"><div class="bar-fill" style="width:${(count / max) * 100}%"></div></div>
+    `;
+    container.appendChild(row);
   }
 }
 
