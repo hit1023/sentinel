@@ -72,6 +72,10 @@ integrity_watch:
     - "*.tmp"
     # CUPSが印刷購読の状態管理のため頻繁に書き換える運用ファイル（改ざんではない）
     - "*/cups/subscriptions.conf*"
+    # fail2banのフィルター定義（パッケージ更新時に正規に追加/変更される設定ファイル群）
+    - "*/fail2ban/filter.d/*"
+    - "*/fail2ban/action.d/*"
+    - "*/fail2ban/jail.d/*"
   # ここに一致するパスは、新規作成・削除であっても（通常はwarning止まりのところ）
   # 即座にcriticalとして扱う。SSH公開鍵は不正ログインの前兆として特に重大なため。
   critical_patterns:
