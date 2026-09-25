@@ -130,6 +130,16 @@ hit-linux-ids/
    - **初回起動時は既存の`auth.log`を遡って読まず、ファイル末尾から監視を開始する**
      （でないと巨大な既存ログを一括処理して大量の過去ログイン通知が出る。実際に
      この不具合を踏んで直した経緯あり→「教訓」節参照）
+   - **GeoIP + 逆引きドメイン + 見慣れない国からのログイン検知**（`geoip_enabled`）:
+     発信元IPの国・都市・逆引きドメインを`app/geoip.py`（ip-api.com、APIキー不要の
+     無料枠）で調べ、失敗・成功どちらのアラートメッセージにも`location=国/都市 (ドメイン)`
+     として付与する。さらに、**これまで見たことのない国からのログイン成功**は
+     `notify_on_success`の設定に関わらず閾値なしで即CRITICAL通知する
+     （`いつもと異なるロケーションからのログイン成功`）。初回起動後に最初に観測した
+     国は「いつもの場所」としてベースライン登録されるだけで通知されず、それ以降に
+     新しい国が現れた場合だけがアラート対象になる。社内LAN（プライベートIP）からの
+     アクセスは常にスキップ（`location`が付かず、見慣れない国判定の対象にもならない）。
+     結果はIPごとに`/data/geoip_cache.json`にキャッシュされ、同じIPへの繰り返し問い合わせを避ける
 2. **ファイル整合性監視**（`app/integrity.py`、簡易AIDE）
    - `/etc`, `/root/.ssh`, `/etc/nginx`, `/etc/docker` 等の重要ファイルのSHA-256を記録
    - 初回はベースライン作成のみ。以降は追加/削除/改ざん（ハッシュ不一致）を検知
@@ -414,6 +424,7 @@ skip-worktreeにしている場合は`git pull`が安全）。
 | `auth_watch.notify_on_success` | true | ログイン成功も通知するか |
 | `auth_watch.use_journalctl` | false | trueならjournalctl方式（journalマウントも要有効化） |
 | `auth_watch.sensitive_users` | root, admin, administrator, ubuntu | これらのユーザーへの失敗ログインは閾値未満でも即WARNING |
+| `auth_watch.geoip_enabled` | true | GeoIP+逆引き+見慣れない国からのログイン検知を有効化 |
 | `integrity_watch.watch_paths` | `/etc`, `/root/.ssh`等 | 整合性監視対象（コンテナ内は`/hostfs`配下、globパターン可） |
 | `integrity_watch.critical_patterns` | `*/.ssh/*` | 一致パスは新規/削除/改ざんいずれも即CRITICAL |
 | `procnet_watch.known_listen_ports` | （ホストごとに要調整） | 既知ポート一覧 |
@@ -432,6 +443,17 @@ skip-worktreeにしている場合は`git pull`が安全）。
 
 ## 既知の制約・ハマりどころ
 
+- **GeoIP「見慣れない国」判定は最初の1〜2回が甘い**: 初回起動後に最初に観測した国だけが
+  無条件でベースライン登録される。普段から複数の国（例: 自宅と出張先）から正規にログイン
+  している場合、2つ目の国が現れた時点でまだ「見慣れない国」としてCRITICAL誤検知が出る
+  （3つ目以降からは正しく既知として扱われる）。運用上は初回デプロイ直後に想定される
+  全ロケーションから一度ずつログインしてベースラインを育てておくか、誤検知が出たら
+  Suppression機能（`category: auth_watch`、パターンに国名を含める）で黙らせるとよい。
+- **ip-api.comの無料枠はHTTPのみ・レート制限あり**（45リクエスト/分）。`geoip.py`が
+  IPごとに結果を`/data/geoip_cache.json`へ永続キャッシュすることで通常運用では
+  問題にならないが、短時間に大量の新規IPからアクセスが来る状況（DDoS等）では
+  レート制限に達し、それ以降の問い合わせは黙って失敗する（`location`が付かないだけで
+  検知自体は継続する）。
 - **Mac(Docker Desktop)での`network_mode: host`**: 実際のmacOSホストではなく、
   Docker Desktopが内部で使うLinux VMを見ることになる。Mac miniを「エージェントの
   1台」として動かしても、見えるのはあくまでVM内部の状態（学習・動作確認用途と

@@ -6,6 +6,8 @@ import subprocess
 import time
 from collections import defaultdict, deque
 
+import geoip
+
 FAILED_RE = re.compile(
     r"Failed password for (invalid user )?(?P<user>\S+) from (?P<ip>[0-9a-fA-F:.]+)"
 )
@@ -27,6 +29,7 @@ class AuthWatcher:
         self.use_journalctl = config.get("use_journalctl", False)
         self.log_paths = config.get("log_paths", [])
         self.sensitive_users = {u.lower() for u in config.get("sensitive_users", [])}
+        self.geoip_enabled = config.get("geoip_enabled", True)
         # ip -> deque[timestamp]
         self._fail_events = defaultdict(deque)
         self._state = self._load_state()
@@ -38,7 +41,38 @@ class AuthWatcher:
                     return json.load(f)
             except (OSError, json.JSONDecodeError):
                 pass
-        return {"offsets": {}, "journal_cursor": None}
+        return {"offsets": {}, "journal_cursor": None, "known_countries": []}
+
+    def _location_suffix(self, ip: str) -> str:
+        if not self.geoip_enabled:
+            return ""
+        info = geoip.lookup(ip)
+        # LAN内からのアクセスや位置情報が取得できなかった場合は、
+        # 「location=不明」のようなノイズを出さず何も付けない
+        if not info.get("country"):
+            return ""
+        return f" location={geoip.format_location(info)}"
+
+    def _check_unusual_location(self, ip: str):
+        """ログイン成功元の国を記録し、これまで見たことのない国からの成功ログインは
+        （侵入経路として最も重大なパターンの一つのため）閾値なしで即CRITICAL通知する。
+        初めて起動した直後は既知の国が空なので、最初に見た国は静かにベースライン登録し、
+        それ以降に現れた新しい国だけをアラート対象にする（過去分の遡及検知はしない設計と同じ思想）。"""
+        if not self.geoip_enabled:
+            return None
+        info = geoip.lookup(ip)
+        country = info.get("country") or ""
+        if not country:
+            return None
+        known = set(self._state.get("known_countries", []))
+        if country in known:
+            return None
+        is_first_ever = len(known) == 0
+        known.add(country)
+        self._state["known_countries"] = list(known)
+        if is_first_ever:
+            return None
+        return geoip.format_location(info)
 
     def _save_state(self):
         os.makedirs(os.path.dirname(STATE_PATH), exist_ok=True)
@@ -109,7 +143,8 @@ class AuthWatcher:
                 self.notifier.alert(
                     "auth_watch",
                     f"ブルートフォースの疑い: {ip} から{self.fail_window}秒間に"
-                    f"{self.fail_threshold}回のログイン失敗（直近ユーザー: {user}）",
+                    f"{self.fail_threshold}回のログイン失敗（直近ユーザー: {user}）"
+                    f"{self._location_suffix(ip)}",
                     "critical",
                 )
             # root等のセンシティブなユーザー名は、実在するため「invalid user」判定に
@@ -119,27 +154,41 @@ class AuthWatcher:
             elif not is_invalid_user and user.lower() in self.sensitive_users:
                 self.notifier.alert(
                     "auth_watch",
-                    f"要注意ユーザーへのログイン失敗: user={user} from={ip}",
+                    f"要注意ユーザーへのログイン失敗: user={user} from={ip}{self._location_suffix(ip)}",
                     "warning",
                 )
             return
 
         m = INVALID_USER_RE.search(line)
         if m:
+            ip = m.group("ip")
             self.notifier.alert(
                 "auth_watch",
-                f"存在しないユーザーへのログイン試行: user={m.group('user')} from={m.group('ip')}",
+                f"存在しないユーザーへのログイン試行: user={m.group('user')} from={ip}"
+                f"{self._location_suffix(ip)}",
                 "warning",
             )
             return
 
         m = ACCEPTED_RE.search(line)
-        if m and self.notify_on_success:
-            self.notifier.alert(
-                "auth_watch",
-                f"ログイン成功: user={m.group('user')} from={m.group('ip')} method={m.group('method')}",
-                "info",
-            )
+        if m:
+            ip = m.group("ip")
+            unusual = self._check_unusual_location(ip)
+            if unusual:
+                self.notifier.alert(
+                    "auth_watch",
+                    f"いつもと異なるロケーションからのログイン成功: "
+                    f"user={m.group('user')} from={ip} method={m.group('method')} "
+                    f"location={unusual}",
+                    "critical",
+                )
+            elif self.notify_on_success:
+                self.notifier.alert(
+                    "auth_watch",
+                    f"ログイン成功: user={m.group('user')} from={ip} method={m.group('method')}"
+                    f"{self._location_suffix(ip)}",
+                    "info",
+                )
 
     def check(self):
         try:
