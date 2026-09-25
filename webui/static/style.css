@@ -355,7 +355,7 @@ body.alert-critical .topbar {
 .auth-ip-row .ip { flex: 1; color: #d7f6ff; font-weight: 700; letter-spacing: 0.5px; }
 .auth-ip-row .count { color: var(--neon-red); font-weight: 700; }
 
-.feed-row { display: block; }
+.feed-row { display: block; margin-bottom: 18px; }
 
 .stat-card {
   background: var(--bg-panel);
