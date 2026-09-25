@@ -734,6 +734,7 @@ document.getElementById("openSettingsBtn")?.addEventListener("click", () => {
   document.getElementById("settingsOverlay").style.display = "flex";
   loadSshWhitelist();
   loadNotifySettings();
+  loadReleases();
 });
 
 document.querySelectorAll(".modal-tab").forEach((tab) => {
@@ -779,6 +780,104 @@ document.getElementById("saveNotifySettingsBtn")?.addEventListener("click", asyn
   } finally {
     setTimeout(() => { status.textContent = ""; }, 2500);
   }
+});
+
+// --- エージェント配布ページ（ダウンロードタブ） ---
+let _releasesData = [];
+let _ingestToken = "";
+
+async function loadReleases() {
+  const repoSpan = document.getElementById("dlRepoName");
+  const versionSelect = document.getElementById("dlVersionSelect");
+  if (!versionSelect) return;
+  try {
+    const [relRes, cfgRes] = await Promise.all([
+      fetch("/api/releases"),
+      fetch("/api/central-config"),
+    ]);
+    const relData = await relRes.json();
+    const cfgData = await cfgRes.json();
+    _releasesData = relData.releases || [];
+    _ingestToken = cfgData.ingest_token || "";
+    if (repoSpan) repoSpan.textContent = relData.repo || "-";
+    document.getElementById("dlIngestToken").value = _ingestToken || "(このホストのINGEST_TOKENが未設定です)";
+
+    versionSelect.innerHTML = "";
+    if (!_releasesData.length) {
+      versionSelect.innerHTML = '<option value="">リリースが見つかりません</option>';
+      return;
+    }
+    for (const rel of _releasesData) {
+      const opt = document.createElement("option");
+      opt.value = rel.tag;
+      opt.textContent = rel.tag + (rel.prerelease ? "（プレリリース）" : "");
+      versionSelect.appendChild(opt);
+    }
+    updateDownloadSelection();
+  } catch (e) {
+    console.error("リリース情報の取得に失敗", e);
+    versionSelect.innerHTML = '<option value="">取得に失敗しました</option>';
+  }
+}
+
+function _assetNameForOs(os) {
+  return os === "macos" ? "sentinel-agent-macos-arm64.tar.gz" : "sentinel-agent-linux-x86_64.tar.gz";
+}
+
+function updateDownloadSelection() {
+  const osSelect = document.getElementById("dlOsSelect");
+  const versionSelect = document.getElementById("dlVersionSelect");
+  const btn = document.getElementById("dlDownloadBtn");
+  const info = document.getElementById("dlAssetInfo");
+  const notes = document.getElementById("dlReleaseNotes");
+  const curlInput = document.getElementById("dlCurlCommand");
+  if (!osSelect || !versionSelect || !btn) return;
+
+  const os = osSelect.value;
+  const tag = versionSelect.value;
+  const rel = _releasesData.find((r) => r.tag === tag);
+
+  if (!rel) {
+    btn.href = "#";
+    info.textContent = "";
+    notes.textContent = "";
+    curlInput.value = "";
+    return;
+  }
+
+  const assetName = _assetNameForOs(os);
+  const asset = (rel.assets || []).find((a) => a.name === assetName);
+  if (asset) {
+    btn.href = asset.download_url;
+    info.textContent = `${asset.name}（${(asset.size / 1024 / 1024).toFixed(1)} MB）`;
+  } else {
+    btn.href = "#";
+    info.textContent = "このバージョンには対応アセットがありません";
+  }
+  notes.textContent = rel.body || "(リリースノートなし)";
+
+  const repo = document.getElementById("dlRepoName")?.textContent || "";
+  const installScript = os === "macos" ? "install-macos.sh" : "install-native.sh";
+  const webuiUrl = `${window.location.protocol}//${window.location.host}`;
+  const tokenPart = _ingestToken || "<共有Ingestトークンをここに>";
+  curlInput.value =
+    `curl -fsSL https://raw.githubusercontent.com/${repo}/main/${installScript} | ` +
+    `sudo bash -s -- --non-interactive --webui-url ${webuiUrl} --token ${tokenPart} ` +
+    `--host-label $(hostname) --version ${tag}`;
+}
+
+document.getElementById("dlOsSelect")?.addEventListener("change", updateDownloadSelection);
+document.getElementById("dlVersionSelect")?.addEventListener("change", updateDownloadSelection);
+
+document.getElementById("dlCopyTokenBtn")?.addEventListener("click", () => {
+  const input = document.getElementById("dlIngestToken");
+  input?.select();
+  navigator.clipboard?.writeText(input.value).catch(() => {});
+});
+document.getElementById("dlCopyCurlBtn")?.addEventListener("click", () => {
+  const input = document.getElementById("dlCurlCommand");
+  input?.select();
+  navigator.clipboard?.writeText(input.value).catch(() => {});
 });
 
 document.getElementById("testNotifySettingsBtn")?.addEventListener("click", async () => {

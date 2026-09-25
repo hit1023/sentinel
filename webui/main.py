@@ -520,6 +520,73 @@ async def ingest_status(payload: dict, authorization: str | None = Header(defaul
     return {"ok": True}
 
 
+GITHUB_RELEASES_REPO = os.environ.get("GITHUB_RELEASES_REPO", "hit1023/sentinel")
+RELEASES_CACHE_TTL = 300
+_releases_cache = {"data": None, "fetched_at": 0.0}
+
+
+def _fetch_github_releases() -> list[dict]:
+    """公開リポジトリのGitHub Releases一覧を取得する（無認証で使える、レート制限は
+    60req/h/IP程度なので、gate自身のIPからの呼び出しが集中しないようTTLキャッシュする）。"""
+    now = time.time()
+    if _releases_cache["data"] is not None and (now - _releases_cache["fetched_at"]) < RELEASES_CACHE_TTL:
+        return _releases_cache["data"]
+
+    url = f"https://api.github.com/repos/{GITHUB_RELEASES_REPO}/releases"
+    req = urllib.request.Request(
+        url,
+        headers={
+            "Accept": "application/vnd.github+json",
+            # GitHub APIはUser-Agent未指定だと403で拒否するため明示的に付与する
+            "User-Agent": "sentinel-webui",
+        },
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=8) as resp:
+            raw = json.loads(resp.read().decode("utf-8"))
+    except Exception as e:
+        print(f"[releases] GitHub Releases取得に失敗: {e}")
+        # 直前の取得結果が残っていればそれを返し、UIを空にしない
+        return _releases_cache["data"] or []
+
+    releases = []
+    for r in raw:
+        if r.get("draft"):
+            continue
+        releases.append({
+            "tag": r.get("tag_name", ""),
+            "name": r.get("name") or r.get("tag_name", ""),
+            "prerelease": bool(r.get("prerelease")),
+            "published_at": r.get("published_at"),
+            "body": r.get("body") or "",
+            "assets": [
+                {
+                    "name": a.get("name", ""),
+                    "download_url": a.get("browser_download_url", ""),
+                    "size": a.get("size", 0),
+                }
+                for a in r.get("assets", [])
+                if a.get("name", "").endswith(".tar.gz")
+            ],
+        })
+    _releases_cache["data"] = releases
+    _releases_cache["fetched_at"] = now
+    return releases
+
+
+@app.get("/api/releases")
+def api_releases():
+    return {"releases": _fetch_github_releases(), "repo": GITHUB_RELEASES_REPO}
+
+
+@app.get("/api/central-config")
+def api_central_config():
+    """配布ページで実行コマンドを組み立てるための補助情報。
+    ssh-whitelist/suppressions等と同様、このWebUI自体が無認証で操作できる前提
+    （信頼されたLAN内での利用を想定）のため、共有Ingestトークンもここで返してよい。"""
+    return {"ingest_token": INGEST_TOKEN}
+
+
 @app.get("/api/hosts")
 def api_hosts():
     hosts = _read_hosts_status()

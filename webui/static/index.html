@@ -69,6 +69,7 @@
     <div class="modal-tabs">
       <span class="modal-tab active" data-tab="ssh-whitelist">🔐 SSH許可リスト</span>
       <span class="modal-tab" data-tab="email-notify">🔔 メール通知</span>
+      <span class="modal-tab" data-tab="download">⬇ ダウンロード</span>
     </div>
     <div class="modal-body">
 
@@ -109,6 +110,69 @@
             <span class="mono-dim" id="notifySettingsStatus"></span>
           </div>
         </div>
+      </div>
+
+      <div class="modal-tab-panel" id="tab-download" style="display:none;">
+        <p class="mono-dim" style="margin:0 0 12px;">
+          新しいホストにエージェントを導入するためのインストーラをダウンロードできます。
+          Linux(systemd)・macOS(launchd)向けの単一バイナリで、Dockerは不要です。
+          過去バージョンも含め、GitHub Releases（<code id="dlRepoName">-</code>）から直接取得します。
+        </p>
+
+        <div class="settings-form">
+          <label class="settings-label">OS</label>
+          <select id="dlOsSelect">
+            <option value="linux">🐧 Linux（x86_64 / systemd）</option>
+            <option value="macos">🍎 macOS（Apple Silicon / launchd）</option>
+          </select>
+
+          <label class="settings-label">バージョン</label>
+          <select id="dlVersionSelect">
+            <option value="">読み込み中…</option>
+          </select>
+
+          <div class="settings-actions">
+            <a id="dlDownloadBtn" class="mini-btn" href="#" target="_blank" rel="noopener">⬇ tar.gzをダウンロード</a>
+            <span class="mono-dim" id="dlAssetInfo"></span>
+          </div>
+
+          <div id="dlReleaseNotes" class="mono-dim" style="white-space:pre-wrap; margin-top:10px; max-height:120px; overflow-y:auto;"></div>
+        </div>
+
+        <hr style="border-color:var(--border); margin:16px 0;">
+
+        <p class="mono-dim" style="margin:0 0 8px;"><strong>インストール手順</strong></p>
+        <ol class="mono-dim" style="margin:0 0 12px; padding-left:20px; line-height:1.7;">
+          <li>上のプルダウンでOS・バージョンを選び、tar.gzをダウンロードするか、
+              下記のワンライナーを対象ホストの端末に貼り付けて実行する
+              （<code>sudo</code>を使うため、root権限で実行すること）。</li>
+          <li><code>--token</code>には、下の「共有Ingestトークン」欄に表示されている値をそのまま使う
+              （このWebUI自身の<code>INGEST_TOKEN</code>環境変数と一致している必要がある）。</li>
+          <li><code>--host-label</code>は司令塔のHOSTSパネルに表示される名前。省略するとOSのホスト名になる。</li>
+          <li>実行後、数十秒でこのダッシュボードのHOSTSパネルに新しいホストが表示されれば成功。</li>
+          <li>procnet_watchの誤検知を減らすため、<code>/etc/sentinel/config.yaml</code>の
+              <code>known_listen_ports</code>/<code>known_process_keywords</code>を
+              そのホストの構成に合わせて調整するとよい（インストーラの出力に現在の
+              リスニングポート一覧が表示されるので参考にする）。</li>
+        </ol>
+
+        <label class="settings-label">共有Ingestトークン（<code>--token</code>にそのまま使う）</label>
+        <div class="settings-add-row">
+          <input type="text" id="dlIngestToken" readonly placeholder="（取得中…）">
+          <span class="mini-btn" id="dlCopyTokenBtn">コピー</span>
+        </div>
+
+        <label class="settings-label">実行コマンド（対象ホストの端末に貼り付ける）</label>
+        <div class="settings-add-row">
+          <input type="text" id="dlCurlCommand" readonly>
+          <span class="mini-btn" id="dlCopyCurlBtn">コピー</span>
+        </div>
+        <p class="mono-dim" style="margin:8px 0 0; font-size:12px;">
+          <code>--host-label</code>は好きな名前に書き換えてから実行すること
+          （既定では実行元ホストの<code>hostname</code>が使われる）。
+          AIトリアージ(Cloudflare AI Gateway)を使う場合は<code>--cf-ai-token</code>も追加する
+          （既定では無効、設定しなくても通知は従来どおり届く）。
+        </p>
       </div>
 
     </div>
