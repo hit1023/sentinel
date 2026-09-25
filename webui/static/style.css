@@ -479,6 +479,34 @@ body.alert-critical .topbar {
   transition: transform 0.2s ease;
 }
 .feed-panel.collapsed .feed-collapse-chevron { transform: rotate(-90deg); }
+
+.feed-collapsed-preview {
+  display: none;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: 11px;
+  letter-spacing: 0.3px;
+}
+.feed-collapsed-preview .sev-tag {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-size: 9px;
+  font-weight: 700;
+  margin-right: 6px;
+  vertical-align: 1px;
+}
+.feed-collapsed-preview .sev-tag.critical { background: rgba(255,60,90,0.18); color: var(--neon-red); }
+.feed-collapsed-preview .sev-tag.warning { background: rgba(255,176,32,0.18); color: var(--neon-amber); }
+.feed-collapsed-preview .sev-tag.info { background: rgba(36,240,255,0.12); color: var(--neon-cyan); }
+.feed-collapsed-preview .host-tag { color: var(--neon-green); margin-right: 6px; }
+.feed-collapsed-preview .msg { color: var(--text-dim); }
+/* 折りたたみ時だけプレビューを表示し、タイトルは縮めてスペースを譲る */
+.feed-panel.collapsed .term-title { flex: 0 0 auto; }
+.feed-panel.collapsed .feed-collapsed-preview { display: inline-block; }
 .term-dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
 .dot-red { background: var(--neon-red); box-shadow: 0 0 6px var(--neon-red); }
 .dot-amber { background: var(--neon-amber); box-shadow: 0 0 6px var(--neon-amber); }

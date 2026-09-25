@@ -172,6 +172,7 @@ function renderAlert(a, prepend, highlight) {
   const div = buildAlertElement(a);
   if (prepend) {
     feedEl.prepend(div);
+    updateFeedCollapsedPreview(a);
   } else {
     feedEl.appendChild(div);
   }
@@ -202,6 +203,25 @@ function reRenderFeed() {
   for (const a of visible) {
     feedEl.appendChild(buildAlertElement(a));
   }
+  updateFeedCollapsedPreview(visible[0]);
+}
+
+// 折りたたみ中でも最新1件だけはタイトルバーに表示しておく（畳んだら何も分からなくなるのは不便なため）
+function updateFeedCollapsedPreview(a) {
+  const el = document.getElementById("feedCollapsedPreview");
+  if (!el) return;
+  if (!a) {
+    el.textContent = "";
+    return;
+  }
+  const sevClass = severityClass(a.severity);
+  const sevLabel = escapeHtml((a.severity || "").toUpperCase());
+  const host = escapeHtml(a.host || "unknown");
+  const msg = escapeHtml((a.message || "").replace(/\s+/g, " "));
+  el.innerHTML =
+    `<span class="sev-tag ${sevClass}">${sevLabel}</span>` +
+    `<span class="host-tag">${host}</span>` +
+    `<span class="msg">${msg}</span>`;
 }
 
 async function loadHistoryForFilter(filter) {
