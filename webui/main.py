@@ -201,7 +201,11 @@ def _apply_suppressions(record: dict):
     rules = _load_suppressions()
     for rule in rules:
         if _matches_suppression(record, rule):
-            record.setdefault("original_severity", record.get("severity", "unknown"))
+            # setdefaultだとoriginal_severityが既にNoneとして存在するケース(agent側の
+            # notify.pyがAI非格下げ時にNoneを送ってくる)で何もせず終わってしまうため、
+            # 明示的にfalsyかどうかで判定する。
+            if not record.get("original_severity"):
+                record["original_severity"] = record.get("severity", "unknown")
             record["severity"] = "info"
             record["suppressed"] = True
             record["suppression_pattern"] = rule["pattern"]
@@ -235,7 +239,11 @@ def _apply_ssh_whitelist(record: dict):
         return
     for entry in _load_ssh_whitelist():
         if _matches_ssh_whitelist(record, entry["entry"]):
-            record.setdefault("original_severity", record.get("severity", "unknown"))
+            # setdefaultだとoriginal_severityが既にNoneとして存在するケース(agent側の
+            # notify.pyがAI非格下げ時にNoneを送ってくる)で何もせず終わってしまうため、
+            # 明示的にfalsyかどうかで判定する。
+            if not record.get("original_severity"):
+                record["original_severity"] = record.get("severity", "unknown")
             record["severity"] = "info"
             record["suppressed"] = True
             record["suppression_pattern"] = f"SSH許可リスト: {entry['entry']}"
@@ -245,8 +253,13 @@ def _apply_ssh_whitelist(record: dict):
 def _persist_important(record: dict):
     # 元々critical/warningだったもの（AIに格下げされたものも含む）を対象にする。
     # そうしないとAIが非脅威判定してinfoに格下げしたアラートが監査ログから漏れる。
+    # 注意: agent側(app/notify.py)はAIが格下げしなかった場合、original_severityを
+    # 明示的にNoneとして送ってくる(「格下げされた場合だけ意味を持つ値」という設計)。
+    # record.get(key, default)はキーが存在すれば値(None)をそのまま返しdefaultは
+    # 使われないため、素朴に書くとAIが脅威と判定して残した最重要アラートの方が
+    # Noneになって保存対象から漏れる、という逆転したバグになる。
     severity = record.get("severity", "unknown")
-    original_severity = record.get("original_severity", severity)
+    original_severity = record.get("original_severity") or severity
     if original_severity not in PERSIST_SEVERITIES:
         return
     with _db_connect() as conn:
