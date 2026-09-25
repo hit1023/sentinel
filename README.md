@@ -461,6 +461,21 @@ git push origin v0.2.0
 インストーラスクリプトが同梱される。`install-native.sh` / `install-macos.sh`は
 GitHub Releasesから最新（または指定バージョン）のアセットを取得して展開する。
 
+### 自動更新（`updater`）
+
+各エージェントは`config.yaml`の`updater.enabled: true`で、GitHub Releasesの最新版を
+定期チェックできる（既定は無効、`app/updater.py`）。
+
+- `updater.check_interval_seconds`（既定6時間）ごとにGitHub Releases APIを叩き、
+  自分のバージョンと比較する。
+- 新しいバージョンがあれば`updater`カテゴリでINFO通知（司令塔のフィードに出るだけ）。
+- `updater.auto_apply: true`にすると、新しいバイナリをダウンロードして
+  `.sha256`アセットとSHA256を照合し、一致すれば`/opt/sentinel/sentinel-agent`を
+  差し替えたうえでプロセスを終了する。systemd(`Restart=always`)/launchd(`KeepAlive`)が
+  自動的に新バイナリで再起動する（プロセス内での自己exec置換のような複雑なことはしない）。
+- IDSが更新失敗で無言停止するリスクを避けるため、`auto_apply`の既定はfalse
+  （通知のみ）。運用者が動作を確認したうえで明示的にoptインすることを推奨する。
+
 ## CI/CD
 
 **マネージャーホストのみ**自動デプロイ対象。`main`ブランチへのpushで、マネージャー上の
@@ -511,8 +526,10 @@ curl -sf http://localhost:8877/api/stats  # ヘルスチェック
 | `ai_triage.api_token` | "" | **.envの`CF_AI_GATEWAY_TOKEN`推奨** |
 | `ai_triage.timeout_seconds` | 8 | Gateway呼び出しのタイムアウト |
 | `ai_triage.auto_dismiss_non_threats` | true | 非脅威判定を自動でINFOへ格下げするか |
-| `updater.enabled` | true | 新バージョンの検知を有効化するか |
+| `updater.enabled` | false | 新バージョンの検知を有効化するか |
+| `updater.check_interval_seconds` | 21600 | チェック間隔（秒、既定6時間） |
 | `updater.auto_apply` | false | 新バージョンを自動適用するか（既定は通知のみ） |
+| `updater.github_repo` | `hit1023/sentinel` | チェック先のGitHubリポジトリ |
 
 ## 既知の制約・ハマりどころ
 

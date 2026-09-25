@@ -10,6 +10,7 @@ from notify import Notifier
 from outbound_watch import OutboundWatcher
 from procnet_watch import ProcNetWatcher
 from status_writer import report_status
+from updater import UpdateChecker
 from version import get_version
 
 # Docker運用では/app/config.yaml、ネイティブ運用(systemd/launchd)では
@@ -43,6 +44,8 @@ def main():
         outbound_config["local_service_ports"] = config.get("procnet_watch", {}).get("known_listen_ports", [])
         watchers.append(OutboundWatcher(outbound_config, notifier))
 
+    updater = UpdateChecker(config.get("updater", {}), notifier)
+
     interval = config.get("interval_seconds", 60)
 
     while True:
@@ -52,6 +55,7 @@ def main():
             except Exception as e:  # 1つの監視の異常で全体を落とさない
                 notifier.alert("main", f"{type(w).__name__} でエラー: {e}", "error")
         report_status(central_config)
+        updater.maybe_check()
         time.sleep(interval)
 
 

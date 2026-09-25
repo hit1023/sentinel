@@ -201,3 +201,17 @@ ai_triage:
   # レコード自体は削除せず ai_dismissed:true として残るため、後から見返せる。
   # AIの誤判定で見逃しが起きるリスクを許容できる場合のみtrueにすること。
   auto_dismiss_non_threats: true
+
+# --- 自動更新（GitHub Releasesの最新版チェック） ---
+updater:
+  # 既定はOFF。有効にしてもauto_apply:falseなら「新バージョンあり」の通知が
+  # 届くだけで、バイナリの差し替えは行わない。
+  enabled: false
+  # チェック間隔（秒）。既定6時間。
+  check_interval_seconds: 21600
+  # trueにすると、新バージョン検知時に自動でダウンロード・SHA256検証・差し替えを行い、
+  # プロセスを終了する（systemd/launchdのRestart=always/KeepAliveにより自動的に
+  # 新バイナリで再起動される）。IDSの常駐が更新失敗で無言停止するリスクを避けるため、
+  # 運用者が明示的にoptインするまでは既定false（通知のみ）を推奨する。
+  auto_apply: false
+  github_repo: "hit1023/sentinel"
