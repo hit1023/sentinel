@@ -1,4 +1,5 @@
 """hit-linux-ids エントリポイント。設定を読み込み、監視ループを回す"""
+import os
 import time
 
 import yaml
@@ -9,8 +10,12 @@ from notify import Notifier
 from outbound_watch import OutboundWatcher
 from procnet_watch import ProcNetWatcher
 from status_writer import report_status
+from version import get_version
 
-CONFIG_PATH = "/app/config.yaml"
+# Docker運用では/app/config.yaml、ネイティブ運用(systemd/launchd)では
+# /etc/sentinel/config.yamlを既定とする。Dockerfile/compose側は明示的に
+# HITIDS_CONFIG_PATH=/app/config.yamlをセットして従来の挙動を維持する。
+CONFIG_PATH = os.environ.get("HITIDS_CONFIG_PATH", "/etc/sentinel/config.yaml")
 
 
 def load_config():
@@ -22,7 +27,7 @@ def main():
     config = load_config()
     central_config = config.get("central", {})
     notifier = Notifier(config.get("notify", {}), config.get("ai_triage", {}), central_config)
-    notifier.alert("startup", "hit-linux-ids を起動しました", "info")
+    notifier.alert("startup", f"hit-linux-ids v{get_version()} を起動しました", "info")
 
     watchers = []
     if config.get("auth_watch", {}).get("enabled", True):

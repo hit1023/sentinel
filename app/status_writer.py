@@ -10,6 +10,7 @@ except ImportError:
     psutil = None
 
 import central_config as central_config_mod
+from version import get_version
 
 
 def build_snapshot() -> dict:
@@ -19,6 +20,7 @@ def build_snapshot() -> dict:
         "listen_port_count": None,
         "cpu_percent": None,
         "mem_percent": None,
+        "agent_version": get_version(),
     }
     if psutil is not None:
         try:

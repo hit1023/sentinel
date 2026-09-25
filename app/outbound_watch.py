@@ -9,7 +9,9 @@ try:
 except ImportError:
     psutil = None
 
-STATE_PATH = "/data/outbound_state.json"
+import paths
+
+STATE_PATH = os.path.join(paths.data_dir(), "outbound_state.json")
 
 
 class OutboundWatcher:

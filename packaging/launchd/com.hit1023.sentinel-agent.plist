@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.hit1023.sentinel-agent</string>
+
+  <!-- 環境変数はplistに直接書かず、起動時にラッパーで /etc/sentinel/env を
+       source してからバイナリを実行する（トークン等を平文でplistに残さないため）。 -->
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/sh</string>
+    <string>-c</string>
+    <string>[ -f /etc/sentinel/env ] &amp;&amp; . /etc/sentinel/env; export HITIDS_CONFIG_PATH=/etc/sentinel/config.yaml; export HITIDS_DATA_DIR=/var/lib/sentinel; exec /opt/sentinel/sentinel-agent</string>
+  </array>
+
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+
+  <!-- procnet_watch/integrity_watchが全プロセス・全ファイルシステムを見る必要があるため
+       LaunchDaemon(root権限)として/Library/LaunchDaemons/に配置すること
+       （ユーザーセッション限定のLaunchAgentでは権限が不足する）。 -->
+
+  <key>StandardOutPath</key>
+  <string>/var/log/sentinel/agent.log</string>
+  <key>StandardErrorPath</key>
+  <string>/var/log/sentinel/agent.error.log</string>
+</dict>
+</plist>

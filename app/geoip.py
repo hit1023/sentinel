@@ -7,7 +7,9 @@ import os
 import socket
 import urllib.request
 
-CACHE_PATH = "/data/geoip_cache.json"
+import paths
+
+CACHE_PATH = os.path.join(paths.data_dir(), "geoip_cache.json")
 _cache = None
 
 

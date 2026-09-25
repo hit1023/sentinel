@@ -7,7 +7,9 @@ try:
 except ImportError:
     psutil = None
 
-STATE_PATH = "/data/procnet_state.json"
+import paths
+
+STATE_PATH = os.path.join(paths.data_dir(), "procnet_state.json")
 
 
 class ProcNetWatcher:

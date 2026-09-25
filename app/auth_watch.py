@@ -7,6 +7,7 @@ import time
 from collections import defaultdict, deque
 
 import geoip
+import paths
 
 FAILED_RE = re.compile(
     r"Failed password for (invalid user )?(?P<user>\S+) from (?P<ip>[0-9a-fA-F:.]+)"
@@ -16,7 +17,7 @@ ACCEPTED_RE = re.compile(
 )
 INVALID_USER_RE = re.compile(r"Invalid user (?P<user>\S+) from (?P<ip>[0-9a-fA-F:.]+)")
 
-STATE_PATH = "/data/auth_watch_state.json"
+STATE_PATH = os.path.join(paths.data_dir(), "auth_watch_state.json")
 
 
 class AuthWatcher:
@@ -27,7 +28,7 @@ class AuthWatcher:
         self.fail_window = config.get("fail_window_seconds", 300)
         self.notify_on_success = config.get("notify_on_success", True)
         self.use_journalctl = config.get("use_journalctl", False)
-        self.log_paths = config.get("log_paths", [])
+        self.log_paths = [paths.resolve_log_path(p) for p in config.get("log_paths", [])]
         self.sensitive_users = {u.lower() for u in config.get("sensitive_users", [])}
         self.geoip_enabled = config.get("geoip_enabled", True)
         # ip -> deque[timestamp]

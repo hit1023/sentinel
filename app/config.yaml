@@ -25,11 +25,14 @@ central:
 # --- 認証ログ監視 ---
 auth_watch:
   enabled: true
-  # コンテナ内から見えるホストの認証ログパス（docker-composeでread-onlyマウント）
+  # 実ホスト上のパスをそのまま書く。Docker運用時のみHITIDS_LOG_PREFIX(既定/hostlogs)が
+  # 自動的に前置され、docker-composeでread-onlyマウントされた場所を見に行く
+  # （ネイティブ運用のsystemd/launchdではプレフィックスなし=このパスそのものを見る）。
   log_paths:
-    - /hostlogs/auth.log
+    - /var/log/auth.log
   # journalctl方式（rsyslogがauth.logを吐かないディストロ用）。使う場合はtrueにし、
   # docker-composeで /var/log/journal を read-only マウントしてください。
+  # ネイティブ運用のLinuxでは、こちらをtrueにするのを推奨(auth.log非搭載ディストロが多いため)。
   use_journalctl: false
   # 同一IPからの失敗ログイン、この回数を超えたらアラート
   fail_threshold: 5
@@ -55,14 +58,16 @@ auth_watch:
 # --- ファイル整合性監視（簡易AIDE） ---
 integrity_watch:
   enabled: true
-  # 監視対象パス（コンテナ内からは /hostfs 配下にマッピングされる）
-  # globパターン（*/?/[]）も使用可（例: /hostfs/home/*/.ssh でroot以外の全ユーザーを対象化）
+  # 実ホスト上のパスをそのまま書く。Docker運用時のみHITIDS_FS_PREFIX(既定/hostfs)が
+  # 自動的に前置され、docker-composeでread-onlyマウントされたホスト全体を見に行く
+  # （ネイティブ運用のsystemd/launchdではプレフィックスなし=このパスそのものを見る）。
+  # globパターン（*/?/[]）も使用可（例: /home/*/.ssh でroot以外の全ユーザーを対象化）
   watch_paths:
-    - /hostfs/etc
-    - /hostfs/root/.ssh
-    - /hostfs/home/*/.ssh
-    - /hostfs/etc/nginx
-    - /hostfs/etc/docker
+    - /etc
+    - /root/.ssh
+    - /home/*/.ssh
+    - /etc/nginx
+    - /etc/docker
   # 除外パターン（fnmatch形式、フルパスに対して判定）
   exclude_patterns:
     - "*/etc/mtab"

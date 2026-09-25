@@ -22,12 +22,21 @@ services:
       - CENTRAL_WEBUI_URL=${CENTRAL_WEBUI_URL:-}
       # ダッシュボード上でのホスト表示名。空ならOSのホスト名を自動使用。
       - CENTRAL_HOST_LABEL=${CENTRAL_HOST_LABEL:-}
+      # config.yaml自体はコード共通化のため実パス表記(/etc等)で書かれているので、
+      # Docker運用時だけ下記プレフィックスを前置してホストの実体を見に行く
+      # (ネイティブ運用のsystemd/launchdではこれらは未設定=プレフィックスなしになる)。
+      - HITIDS_CONFIG_PATH=/app/config.yaml
+      - HITIDS_FS_PREFIX=/hostfs
+      - HITIDS_LOG_PREFIX=/hostlogs
+      - HITIDS_DATA_DIR=/data
     volumes:
       - ./app/config.yaml:/app/config.yaml:ro
       - ./data:/data
       # 認証ログ（rsyslog系。journalctl方式を使う場合はconfigでuse_journalctl: trueにし、
-      # 下のjournalマウントを有効化してください）
-      - /var/log/auth.log:/hostlogs/auth.log:ro
+      # 下のjournalマウントを有効化してください）。
+      # マウント先はHITIDS_LOG_PREFIX(/hostlogs)+実パスの形にする(resolve_log_pathの
+      # 単純な文字列連結と一致させるため、ファイル名だけでなく/var/log以下ごと保持する)。
+      - /var/log/auth.log:/hostlogs/var/log/auth.log:ro
       # - /var/log/journal:/var/log/journal:ro
       # ファイル整合性監視用にホストのファイルシステムを読み取り専用でマウント
       - /:/hostfs:ro

@@ -5,6 +5,8 @@ import hashlib
 import json
 import os
 
+import paths
+
 
 def _sha256(path, chunk_size=65536):
     h = hashlib.sha256()
@@ -24,12 +26,18 @@ class IntegrityWatcher:
     def __init__(self, config: dict, notifier):
         self.config = config
         self.notifier = notifier
-        self.watch_paths = config.get("watch_paths", [])
+        # watch_pathsはconfig.yaml上は実パス表記（例: /etc, /home/*/.ssh）で書き、
+        # Docker運用時だけHITIDS_FS_PREFIX(通常/hostfs)を前置してホスト実体を見に行く。
+        self.watch_paths = [paths.resolve_fs_path(p) for p in config.get("watch_paths", [])]
+        # exclude_patterns/critical_patternsは先頭が*から始まるfnmatchパターンのため
+        # プレフィックスの有無に関わらずマッチするので変換不要。
         self.exclude_patterns = config.get("exclude_patterns", [])
-        self.baseline_path = config.get("baseline_path", "/data/integrity_baseline.json")
+        self.baseline_path = config.get(
+            "baseline_path", os.path.join(paths.data_dir(), "integrity_baseline.json")
+        )
         # ここに一致するパスは、新規作成・削除であっても（通常はwarning止まりのところ）
         # 即座にcriticalとして扱う。SSH公開鍵はroot以外の全ユーザー分を対象にしたいので
-        # watch_paths側はglobパターン（例: /hostfs/home/*/.ssh）にも対応させている
+        # watch_paths側はglobパターン（例: /home/*/.ssh）にも対応させている
         self.critical_patterns = config.get("critical_patterns", ["*/.ssh/*"])
 
     def _is_excluded(self, path):

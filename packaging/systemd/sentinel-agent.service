@@ -1,0 +1,24 @@
+[Unit]
+Description=SENTINEL (hit-linux-ids) host IDS agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/opt/sentinel/sentinel-agent
+WorkingDirectory=/opt/sentinel
+Restart=always
+RestartSec=5
+# procnet_watch/integrity_watchが全プロセス・全ファイルシステムを見る必要があるため
+# root権限で稼働する。これはDocker版のcap_add:SYS_PTRACE + /:/hostfs:roと同等の
+# 権限レベルであり、ネイティブ化によって権限が絞られるわけではない点に注意。
+User=root
+# CENTRAL_WEBUI_URL / CENTRAL_INGEST_TOKEN / CENTRAL_HOST_LABEL / CF_AI_GATEWAY_TOKEN 等は
+# /etc/sentinel/env に KEY=VALUE 形式で書く（install-native.shが生成する）。
+# 先頭の "-" はファイルが存在しなくても起動を失敗させないための指定。
+EnvironmentFile=-/etc/sentinel/env
+Environment=HITIDS_CONFIG_PATH=/etc/sentinel/config.yaml
+Environment=HITIDS_DATA_DIR=/var/lib/sentinel
+
+[Install]
+WantedBy=multi-user.target

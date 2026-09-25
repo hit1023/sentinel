@@ -543,9 +543,13 @@ function renderHostsList(hosts) {
     row.className = "host-row" + (h.online ? "" : " offline");
     const cpu = h.cpu_percent != null ? h.cpu_percent.toFixed(0) + "%" : "--";
     const mem = h.mem_percent != null ? h.mem_percent.toFixed(0) + "%" : "--";
+    const versionBadge = h.agent_version
+      ? `<span class="host-version" title="エージェントバージョン">v${escapeHtml(h.agent_version)}</span>`
+      : "";
     row.innerHTML = `
       <span class="host-dot ${h.online ? "dot-on" : "dot-off"}"></span>
       <span class="host-name">${escapeHtml(h.host || "unknown")}</span>
+      ${versionBadge}
       <span class="host-metric">CPU ${cpu}</span>
       <canvas class="host-spark" width="70" height="22" title="CPU推移"></canvas>
       <span class="host-metric">MEM ${mem}</span>

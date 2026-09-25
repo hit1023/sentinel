@@ -8,6 +8,7 @@ import urllib.error
 
 import ai_triage
 import central_config as central_config_mod
+import paths
 
 # コンテナはTZ設定に関わらずUTCで動くことが多いため、表示・保存する時刻は
 # システムのローカルタイムに依存せずJST固定で生成する。
@@ -16,7 +17,7 @@ JST = datetime.timezone(datetime.timedelta(hours=9))
 
 class Notifier:
     def __init__(self, config: dict, ai_triage_config: dict | None = None, central_config: dict | None = None):
-        self.log_file = config.get("log_file", "/data/alerts.log")
+        self.log_file = config.get("log_file", os.path.join(paths.data_dir(), "alerts.log"))
         self.webhook_url = config.get("webhook_url") or None
         self.webhook_token = config.get("webhook_token") or None
         self.ai_triage_config = ai_triage_config or {}
