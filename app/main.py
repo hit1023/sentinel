@@ -32,7 +32,11 @@ def main():
     if config.get("procnet_watch", {}).get("enabled", True):
         watchers.append(ProcNetWatcher(config["procnet_watch"], notifier))
     if config.get("outbound_watch", {}).get("enabled", True):
-        watchers.append(OutboundWatcher(config["outbound_watch"], notifier))
+        outbound_config = dict(config["outbound_watch"])
+        # 自ホストが公開しているサービスへの「着信」を「外向き通信」と誤判定しないよう、
+        # procnet_watchの既知リスニングポート一覧をそのまま継承する
+        outbound_config["local_service_ports"] = config.get("procnet_watch", {}).get("known_listen_ports", [])
+        watchers.append(OutboundWatcher(outbound_config, notifier))
 
     interval = config.get("interval_seconds", 60)
 

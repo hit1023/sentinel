@@ -457,6 +457,7 @@ skip-worktreeにしている場合は`git pull`が安全）。
 | `procnet_watch.cpu_alert_percent` | 90 | 高CPU通知の閾値(%) |
 | `outbound_watch.known_outbound_ports` | 80, 443, 53, 123, 22, 853 | LAN外へのこのポート宛通信は正常扱い |
 | `outbound_watch.suspicious_ports` | 4444, 1337, 6666, 6667, 31337, 12345, 54321 | 一致したら閾値なしで即CRITICAL |
+| `outbound_watch.local_service_ports` | （main.pyがprocnet_watch.known_listen_portsから自動継承、手動設定不要） | このホストが公開しているサービスのポート。着信をここへの「外向き通信」と誤判定しないための除外リスト |
 | `notify.webhook_url` / `webhook_token` | "" | mailman/pushman等への転送用（任意） |
 | `ai_triage.enabled` | true | AIトリアージを使うか |
 | `ai_triage.trigger_severities` | critical, warning | トリアージ対象の重大度 |
@@ -522,6 +523,15 @@ skip-worktreeにしている場合は`git pull`が安全）。
    `docker compose up`済みだったため、コンテナが古い`.env`のまま起動していた。
    → `.env`変更後は`docker compose up -d --force-recreate`が必要な場合がある
    （docker composeは`.env`を`up`実行時にしか読まない）。
+6. **outbound_watchが着信を外向き通信と誤検知** — `psutil.net_connections()`の
+   `ESTABLISHED`接続は通信の向きを区別せず、gateが公開しているWebサービス
+   （nginx-proxy-manager等）への外部からの正常なアクセスも`raddr`に相手の
+   ランダムな送信元ポートが入るだけで拾ってしまい、「未登録ポートへの外向き
+   通信」として誤検知していた（同一IPから毎回異なるポート番号で複数回検知、
+   という挙動が手がかりになった）。
+   → ローカル側ポート(`c.laddr.port`)が自ホストの公開サービスのポート
+   （`procnet_watch.known_listen_ports`を継承）、または1024未満のwell-knownな
+   ポートであれば「着信」とみなしてスキップするよう修正（`local_service_ports`）。
 
 ## 今後の拡張候補
 

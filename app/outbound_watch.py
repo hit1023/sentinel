@@ -18,6 +18,10 @@ class OutboundWatcher:
         self.notifier = notifier
         self.known_ports = set(config.get("known_outbound_ports", []))
         self.suspicious_ports = set(config.get("suspicious_ports", []))
+        # このホストが公開しているサービスのポート（procnet_watch.known_listen_portsを
+        # main.pyから継承）。ここへの着信はraddrにクライアント側のランダムな送信元
+        # ポートが入るだけなので、これを「未登録ポートへの外向き通信」と誤判定しないよう除外する
+        self.local_service_ports = set(config.get("local_service_ports", []))
         self._state = self._load_state()
         if psutil is None:
             self.notifier.alert(
@@ -63,6 +67,12 @@ class OutboundWatcher:
         alerted = set(tuple(x) for x in self._state.get("alerted", []))
         for c in conns:
             if c.status != psutil.CONN_ESTABLISHED or not c.raddr:
+                continue
+            # 通信の向きを見分ける: ローカル側ポートが自分が公開しているサービスの
+            # ポート、または1024未満のwell-knownポートであれば、これは外部からの
+            # 「着信」（raddr.portは相手のランダムな送信元ポートに過ぎない）。
+            # 外向き通信の監視対象はあくまでこのホスト自身が発信した接続のみ。
+            if c.laddr and (c.laddr.port in self.local_service_ports or c.laddr.port < 1024):
                 continue
             ip, port = c.raddr.ip, c.raddr.port
             if self._is_lan(ip):
