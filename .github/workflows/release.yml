@@ -1,0 +1,93 @@
+name: Build and Release Agent
+
+# vX.Y.Zタグをpushしたときだけ動く。mainブランチへの通常pushでは走らない
+# （gate WebUIの自動デプロイはdeploy.ymlが別途担当、役割を分離している）。
+#
+# タグの打ち方:
+#   1. app/VERSION を新しいバージョンに書き換えてコミット
+#   2. git tag v0.2.0 && git push origin v0.2.0
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            artifact_name: sentinel-agent-linux-x86_64
+          - os: macos-latest       # Apple Silicon (arm64) ランナー
+            artifact_name: sentinel-agent-macos-arm64
+          - os: macos-13           # Intel (x86_64) ランナー
+            artifact_name: sentinel-agent-macos-x86_64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Verify tag matches app/VERSION
+        shell: bash
+        run: |
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          FILE_VERSION="$(cat app/VERSION | tr -d '[:space:]')"
+          if [ "$TAG_VERSION" != "$FILE_VERSION" ]; then
+            echo "::error::タグ($TAG_VERSION)とapp/VERSION($FILE_VERSION)が一致しません"
+            exit 1
+          fi
+
+      - name: Install binutils (Linux only, required by PyInstaller for objdump)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq binutils
+
+      - name: Install dependencies
+        run: |
+          pip install -r app/requirements.txt pyinstaller
+
+      - name: Build single-file binary
+        run: |
+          pyinstaller --onefile --name sentinel-agent \
+            --add-data "app/VERSION:." \
+            app/main.py
+
+      - name: Package
+        shell: bash
+        run: |
+          mkdir -p dist-pkg
+          cp dist/sentinel-agent dist-pkg/
+          cp app/VERSION dist-pkg/
+          cp app/config.yaml dist-pkg/config.yaml.example
+          cp packaging/systemd/sentinel-agent.service dist-pkg/ 2>/dev/null || true
+          cp packaging/launchd/com.hit1023.sentinel-agent.plist dist-pkg/ 2>/dev/null || true
+          cp install-native.sh dist-pkg/ 2>/dev/null || true
+          cp install-macos.sh dist-pkg/ 2>/dev/null || true
+          tar -czf ${{ matrix.artifact_name }}.tar.gz -C dist-pkg .
+          sha256sum ${{ matrix.artifact_name }}.tar.gz > ${{ matrix.artifact_name }}.tar.gz.sha256 2>/dev/null \
+            || shasum -a 256 ${{ matrix.artifact_name }}.tar.gz > ${{ matrix.artifact_name }}.tar.gz.sha256
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: |
+            ${{ matrix.artifact_name }}.tar.gz
+            ${{ matrix.artifact_name }}.tar.gz.sha256
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/**/*
+          generate_release_notes: true
+          draft: false

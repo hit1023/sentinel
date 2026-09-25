@@ -369,7 +369,44 @@ CRITICALアラート（抑制ルール・SSH許可リストを経てなお最終
 
 ## セットアップ・新規ホスト追加
 
-### `install.sh`（推奨）
+### ネイティブインストール（Docker不要、推奨）
+
+GitHub Releasesで配布している単一バイナリをsystemd(Linux)/launchd(macOS)の
+常駐サービスとして直接インストールする方式。Dockerのセットアップ・特権設定
+（`pid: host`等）が不要になる。
+
+```bash
+# Linux
+curl -fsSL https://raw.githubusercontent.com/hit1023/sentinel/main/install-native.sh -o install-native.sh
+sudo bash install-native.sh --webui-url http://192.168.0.18:8877 --token <共有トークン> --host-label server-01
+
+# macOS
+curl -fsSL https://raw.githubusercontent.com/hit1023/sentinel/main/install-macos.sh -o install-macos.sh
+sudo bash install-macos.sh --webui-url http://192.168.0.18:8877 --token <共有トークン> --host-label mac-mini
+```
+
+- 対応OS/アーキテクチャ: Linux(x86_64)、macOS(Apple Silicon/Intel両対応)。Windowsは今後の課題。
+- 設定ファイルは`/etc/sentinel/config.yaml`、環境変数は`/etc/sentinel/env`、
+  永続化データは`/var/lib/sentinel`に配置される。
+- `--version v0.2.0`のように特定バージョンを指定してインストール可能（既定は`latest`）。
+- root権限が必要（procnet_watch/integrity_watchが全プロセス・全ファイルシステムを
+  見る必要があるため。Docker版の`cap_add: SYS_PTRACE` + `/:/hostfs:ro`と同等の権限
+  レベルであり、ネイティブ化によって権限が絞られるわけではない点に注意）。
+- macOSは未署名バイナリのためGatekeeperの検疫属性を`xattr -d com.apple.quarantine`で
+  インストーラが自動的に外す。コード署名・公証(notarization)は今後の課題。
+- gate WebUIの「⚙ 設定」→「⬇ ダウンロード」タブから、過去バージョンも含めて
+  インストーラをダウンロードできる。
+
+新しいバージョンをリリースする手順（開発者向け）:
+```bash
+# app/VERSION を新しいバージョン番号に書き換えてコミットした後
+git tag v0.2.0
+git push origin v0.2.0
+```
+タグをpushすると`.github/workflows/release.yml`が起動し、Linux/macOS(arm64/x86_64)
+向けバイナリをビルドしてGitHub Releasesに自動公開する。
+
+### `install.sh`（Docker版、既存ホスト向け）
 
 ```bash
 git clone git@github.com:hit1023/sentinel.git hit-linux-ids
