@@ -790,10 +790,18 @@ async function loadReleases() {
   const repoSpan = document.getElementById("dlRepoName");
   const versionSelect = document.getElementById("dlVersionSelect");
   if (!versionSelect) return;
+  versionSelect.innerHTML = '<option value="">読み込み中…</option>';
+  // LAN越しのfetchがネットワークの瞬断で応答を返さないまま固まるケースがあるため、
+  // 「読み込み中…」表示が永遠に残らないよう明示的にタイムアウトさせる。
+  const withTimeout = (url, ms) => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), ms);
+    return fetch(url, { signal: controller.signal }).finally(() => clearTimeout(timer));
+  };
   try {
     const [relRes, cfgRes] = await Promise.all([
-      fetch("/api/releases"),
-      fetch("/api/central-config"),
+      withTimeout("/api/releases", 10000),
+      withTimeout("/api/central-config", 10000),
     ]);
     const relData = await relRes.json();
     const cfgData = await cfgRes.json();
