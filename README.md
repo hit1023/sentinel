@@ -250,22 +250,33 @@ SUPPRESSION RULESと同じ`suppressed`フラグを使うため、SUPPRESSION RUL
 #### 🔔 メール通知
 
 CRITICALアラート（抑制ルール・SSH許可リストを経てなお最終的にCRITICALのままの
-ものだけ）を、社内の軽量メール送信API経由でメール通知できる。
+ものだけ）をメール通知できる。**SMTP**（Gmail等、自分のメールアカウントで直接送る）と
+**Webhook**（自前のメール送信APIにJSON POSTする）の2方式に対応し、設定されている方が
+使われる（両方設定した場合はSMTPが優先）。特別なメール送信基盤を持っていなくても、
+SMTPだけで動くようにしてあるので、cloneしてすぐ使える。
 
 設定項目:
 
 - **通知を有効にする**（既定OFF）
 - **宛先メールアドレス**（カンマ区切りで複数指定可）
-- **送信元アドレス**（任意。省略時は送信API側の既定送信元を使用）
-- **送信APIのエンドポイント**
+- **送信元アドレス**（任意。省略時はSMTPユーザー名を使用）
+- **SMTP**: ホスト・ポート（既定587、STARTTLS）・ユーザー名・パスワード
+  - Gmailの例: `smtp.gmail.com` / `587` / Gmailアドレス /
+    [アプリパスワード](https://myaccount.google.com/apppasswords)
+    （2段階認証がある場合、通常のログインパスワードではSMTP認証できない）
+- **Webhook**: 独自のメール送信APIがある場合のエンドポイントURL
+  （`{"to": [...], "subject": "...", "text": "...", "from": "..."}` をJSON POSTする）
 
 「テスト送信」ボタンで、実際のアラートを経由せずその場で疎通確認ができる
 （`POST /api/notify-settings/test`、有効化トグルの状態に関わらず送信される）。
 
-実装は`webui/main.py`の`_send_critical_email()`。`ingest_alert`が最終severityを
-確定した後、`severity == "critical"`のものだけ`BackgroundTasks`で非同期送信する
-（メール送信の失敗・遅延がアラート取り込み自体をブロックしないようにするため）。
-設定は`app_settings`テーブル（`GET/POST /api/notify-settings`）に保存される。
+実装は`webui/main.py`の`_send_critical_email()`（`_send_via_smtp()`/`_send_via_webhook()`
+に分岐）。`ingest_alert`が最終severityを確定した後、`severity == "critical"`のものだけ
+`BackgroundTasks`で非同期送信する（メール送信の失敗・遅延がアラート取り込み自体を
+ブロックしないようにするため）。設定は`app_settings`テーブル
+（`GET/POST /api/notify-settings`）に保存される。SMTPパスワードは平文でDBに保存される
+（このWebUI自体がLAN内の信頼された利用者向けに無認証で動く前提のため、他の設定項目と
+同じ扱い）。
 
 既定は無効（`ai_triage.enabled: false`）。account_id/gateway_id/api_tokenの
 いずれかが未設定の場合も自動的にスキップされ、AIなしの従来どおりの通知になる

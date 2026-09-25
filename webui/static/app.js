@@ -753,7 +753,12 @@ async function loadNotifySettings() {
     document.getElementById("notifyEnabled").checked = !!data.enabled;
     document.getElementById("notifyTo").value = data.to || "";
     document.getElementById("notifyFrom").value = data.from_addr || "";
-    document.getElementById("notifyMailmanUrl").value = data.mailman_url || "";
+    document.getElementById("notifySmtpHost").value = data.smtp_host || "";
+    document.getElementById("notifySmtpPort").value = data.smtp_port || "587";
+    document.getElementById("notifySmtpUser").value = data.smtp_user || "";
+    document.getElementById("notifySmtpPassword").value = data.smtp_password || "";
+    document.getElementById("notifySmtpUseTls").checked = data.smtp_use_tls !== false;
+    document.getElementById("notifyWebhookUrl").value = data.webhook_url || "";
   } catch (e) {
     console.error("通知設定の取得に失敗", e);
   }
@@ -770,7 +775,12 @@ document.getElementById("saveNotifySettingsBtn")?.addEventListener("click", asyn
         enabled: document.getElementById("notifyEnabled").checked,
         to: document.getElementById("notifyTo").value,
         from_addr: document.getElementById("notifyFrom").value,
-        mailman_url: document.getElementById("notifyMailmanUrl").value,
+        smtp_host: document.getElementById("notifySmtpHost").value,
+        smtp_port: document.getElementById("notifySmtpPort").value,
+        smtp_user: document.getElementById("notifySmtpUser").value,
+        smtp_password: document.getElementById("notifySmtpPassword").value,
+        smtp_use_tls: document.getElementById("notifySmtpUseTls").checked,
+        webhook_url: document.getElementById("notifyWebhookUrl").value,
       }),
     });
     status.textContent = "保存しました";

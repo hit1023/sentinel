@@ -6,11 +6,13 @@ import ipaddress
 import json
 import os
 import re
+import smtplib
 import sqlite3
 import time
 import urllib.request
 import uuid
 from collections import Counter, defaultdict
+from email.message import EmailMessage
 
 from fastapi import BackgroundTasks, FastAPI, Header, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
@@ -100,13 +102,23 @@ def _init_db():
 
 _init_db()
 
-# --- CRITICALメール通知（mailman連携） ---
+# --- CRITICALメール通知 ---
+# 2方式を用意し、設定されている方を使う（両方設定されていればSMTPを優先）:
+#   - webhook_url: 自前の軽量メール送信API（{to, subject, text, from}をJSON POST）に
+#     投げる従来方式。運用中のホストは既にこれで動いているため後方互換として残す。
+#   - smtp_*: Gmail等、利用者自身のメールプロバイダのSMTPを直接使う汎用方式。
+#     cloneした人が自分のメール送信手段を持ち込めるよう、これを新規セットアップの
+#     既定の案内先とする（README参照）。
 NOTIFY_SETTINGS_DEFAULTS = {
     "notify_email_enabled": "false",
     "notify_email_to": "",
     "notify_email_from": "",
-    # h-1で稼働しているmailmanのエンドポイント（同一LAN内のため直接IPで指定）
-    "mailman_url": "http://192.168.0.20:8765/send",
+    "webhook_url": "",
+    "smtp_host": "",
+    "smtp_port": "587",
+    "smtp_user": "",
+    "smtp_password": "",
+    "smtp_use_tls": "true",
 }
 
 
@@ -115,6 +127,14 @@ def _get_app_setting(key: str) -> str:
         row = conn.execute("SELECT value FROM app_settings WHERE key = ?", (key,)).fetchone()
     if row is not None:
         return row["value"]
+    if key == "webhook_url":
+        # 旧キー名(mailman_url)で既に設定済みの既存ホストとの後方互換。
+        with _db_connect() as conn:
+            legacy = conn.execute(
+                "SELECT value FROM app_settings WHERE key = 'mailman_url'"
+            ).fetchone()
+        if legacy is not None:
+            return legacy["value"]
     return NOTIFY_SETTINGS_DEFAULTS.get(key, "")
 
 
@@ -132,16 +152,54 @@ def _get_notify_settings() -> dict:
         "enabled": _get_app_setting("notify_email_enabled") == "true",
         "to": _get_app_setting("notify_email_to"),
         "from_addr": _get_app_setting("notify_email_from"),
-        "mailman_url": _get_app_setting("mailman_url"),
+        "webhook_url": _get_app_setting("webhook_url"),
+        "smtp_host": _get_app_setting("smtp_host"),
+        "smtp_port": _get_app_setting("smtp_port"),
+        "smtp_user": _get_app_setting("smtp_user"),
+        "smtp_password": _get_app_setting("smtp_password"),
+        "smtp_use_tls": _get_app_setting("smtp_use_tls") == "true",
     }
 
 
+def _send_via_webhook(webhook_url: str, to_list: list, subject: str, text: str, from_addr: str):
+    payload = {"to": to_list, "subject": subject, "text": text}
+    if from_addr:
+        payload["from"] = from_addr
+    req = urllib.request.Request(
+        webhook_url,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    urllib.request.urlopen(req, timeout=8)
+
+
+def _send_via_smtp(settings: dict, to_list: list, subject: str, text: str):
+    from_addr = settings["from_addr"] or settings["smtp_user"] or "sentinel@localhost"
+    msg = EmailMessage()
+    msg["Subject"] = subject
+    msg["From"] = from_addr
+    msg["To"] = ", ".join(to_list)
+    msg.set_content(text)
+
+    smtp_port = int(settings["smtp_port"] or 587)
+    with smtplib.SMTP(settings["smtp_host"], smtp_port, timeout=10) as smtp:
+        if settings["smtp_use_tls"]:
+            smtp.starttls()
+        if settings["smtp_user"]:
+            smtp.login(settings["smtp_user"], settings["smtp_password"])
+        smtp.send_message(msg)
+
+
 def _send_critical_email(record: dict, force: bool = False):
-    """CRITICALアラート発生時にmailman(POST /send)経由でメール通知する。
+    """CRITICALアラート発生時にメール通知する。SMTP・Webhookのどちらか設定されている
+    方式で送信する（両方設定されていればSMTPを優先、いずれも未設定なら何もしない）。
     ingest_alertのレスポンスをブロックしないよう、呼び出し側でBackgroundTasksとして実行する想定。
     force=Trueの場合はenabledトグルを無視して送る（設定タブの「テスト送信」用）。"""
     settings = _get_notify_settings()
     if (not force and not settings["enabled"]) or not settings["to"]:
+        return
+    if not settings["smtp_host"] and not settings["webhook_url"]:
         return
     to_list = [a.strip() for a in settings["to"].split(",") if a.strip()]
     if not to_list:
@@ -165,21 +223,14 @@ def _send_critical_email(record: dict, force: bool = False):
         text_lines += ["", f"AI: {ai_summary}"]
     text = "\n".join(text_lines)
 
-    payload = {"to": to_list, "subject": subject, "text": text}
-    if settings["from_addr"]:
-        payload["from"] = settings["from_addr"]
-
     try:
-        req = urllib.request.Request(
-            settings["mailman_url"],
-            data=json.dumps(payload).encode("utf-8"),
-            headers={"Content-Type": "application/json"},
-            method="POST",
-        )
-        urllib.request.urlopen(req, timeout=8)
+        if settings["smtp_host"]:
+            _send_via_smtp(settings, to_list, subject, text)
+        else:
+            _send_via_webhook(settings["webhook_url"], to_list, subject, text, settings["from_addr"])
     except Exception as e:
         # メール送信の失敗でアラート処理自体を止めない。ローカルログにだけ残す。
-        print(f"[notify] mailmanへのメール送信に失敗: {e}")
+        print(f"[notify] メール送信に失敗: {e}")
 
 
 def _load_suppressions() -> list[dict]:
@@ -488,15 +539,25 @@ async def api_set_notify_settings(payload: dict):
         _set_app_setting("notify_email_to", (payload["to"] or "").strip())
     if "from_addr" in payload:
         _set_app_setting("notify_email_from", (payload["from_addr"] or "").strip())
-    if "mailman_url" in payload:
-        _set_app_setting("mailman_url", (payload["mailman_url"] or "").strip())
+    if "webhook_url" in payload:
+        _set_app_setting("webhook_url", (payload["webhook_url"] or "").strip())
+    if "smtp_host" in payload:
+        _set_app_setting("smtp_host", (payload["smtp_host"] or "").strip())
+    if "smtp_port" in payload:
+        _set_app_setting("smtp_port", str(payload["smtp_port"] or "587").strip())
+    if "smtp_user" in payload:
+        _set_app_setting("smtp_user", (payload["smtp_user"] or "").strip())
+    if "smtp_password" in payload:
+        _set_app_setting("smtp_password", payload["smtp_password"] or "")
+    if "smtp_use_tls" in payload:
+        _set_app_setting("smtp_use_tls", "true" if payload["smtp_use_tls"] else "false")
     return {"ok": True, "settings": _get_notify_settings()}
 
 
 @app.post("/api/notify-settings/test")
 async def api_test_notify_settings():
     """設定タブから「テスト送信」した際に叩くエンドポイント。実際のアラートを
-    経由せず、mailman連携が正しく動くかその場で確認できるようにする。"""
+    経由せず、SMTP/Webhookのどちらの通知経路が正しく動くかその場で確認できるようにする。"""
     settings = _get_notify_settings()
     if not settings["to"]:
         raise HTTPException(status_code=400, detail="宛先メールアドレスが未設定です")

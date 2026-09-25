@@ -92,7 +92,9 @@
       <div class="modal-tab-panel" id="tab-email-notify" style="display:none;">
         <p class="mono-dim" style="margin:0 0 12px;">
           CRITICALアラート発生時（抑制ルール・SSH許可リストを経てなお最終的にCRITICALの
-          ものだけ）、h-1で稼働している<code>mailman</code>経由でメール通知します。
+          ものだけ）にメール通知します。SMTP（Gmail等、自分のメールアカウントで送る）と
+          Webhook（自前のメール送信APIにJSON POSTする）のどちらか設定した方が使われます
+          （両方設定した場合はSMTPが優先されます）。
         </p>
         <div class="settings-form">
           <label class="settings-check">
@@ -100,10 +102,26 @@
           </label>
           <label class="settings-label">宛先メールアドレス（カンマ区切りで複数可）</label>
           <input type="text" id="notifyTo" placeholder="you@example.com, other@example.com">
-          <label class="settings-label">送信元アドレス（任意、省略時はmailmanのDEFAULT_FROM）</label>
+          <label class="settings-label">送信元アドレス（任意、省略時はSMTPユーザー名を使用）</label>
           <input type="text" id="notifyFrom" placeholder="sentinel@example.com">
-          <label class="settings-label">mailmanのエンドポイント</label>
-          <input type="text" id="notifyMailmanUrl" placeholder="http://192.168.0.20:8765/send">
+
+          <p class="mono-dim" style="margin:12px 0 0; font-size:11px;">— SMTP（推奨、Gmail等）—</p>
+          <label class="settings-label">SMTPホスト</label>
+          <input type="text" id="notifySmtpHost" placeholder="smtp.gmail.com">
+          <label class="settings-label">ポート（既定587、STARTTLS）</label>
+          <input type="text" id="notifySmtpPort" placeholder="587">
+          <label class="settings-label">ユーザー名</label>
+          <input type="text" id="notifySmtpUser" placeholder="you@gmail.com">
+          <label class="settings-label">パスワード（Gmailはアプリパスワードを推奨）</label>
+          <input type="password" id="notifySmtpPassword" placeholder="••••••••••••">
+          <label class="settings-check">
+            <input type="checkbox" id="notifySmtpUseTls" checked> STARTTLSを使う
+          </label>
+
+          <p class="mono-dim" style="margin:12px 0 0; font-size:11px;">— Webhook（自前のメール送信APIがある場合）—</p>
+          <label class="settings-label">エンドポイントURL（{to, subject, text, from}をJSON POST）</label>
+          <input type="text" id="notifyWebhookUrl" placeholder="http://192.168.0.20:8765/send">
+
           <div class="settings-actions">
             <span class="mini-btn" id="saveNotifySettingsBtn">保存</span>
             <span class="mini-btn" id="testNotifySettingsBtn">テスト送信</span>
