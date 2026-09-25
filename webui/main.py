@@ -1,6 +1,7 @@
 """hit-linux-ids WebUI: 複数ホストのエージェントから /api/ingest 経由で
 届くアラート・状態スナップショットを集約し、REST + WebSocketで配信する司令塔。"""
 import asyncio
+import datetime
 import ipaddress
 import json
 import os
@@ -13,6 +14,10 @@ from collections import Counter, defaultdict
 
 from fastapi import BackgroundTasks, FastAPI, Header, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
+
+# コンテナはTZ設定に関わらずUTCで動くことが多いため、表示・保存する時刻は
+# システムのローカルタイムに依存せずJST固定で生成する。
+JST = datetime.timezone(datetime.timedelta(hours=9))
 
 # auth_watchのアラートメッセージから発信元IPを抜き出す（"from=IP" / "疑い: IP から"の2パターン）
 AUTH_IP_RE = re.compile(r"from=([0-9a-fA-F:.]+)|疑い: ([0-9a-fA-F:.]+) から")
@@ -349,7 +354,7 @@ async def ingest_alert(
     now = time.time()
     record.setdefault("epoch", now)
     if "timestamp" not in record:
-        record["timestamp"] = time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(record["epoch"]))
+        record["timestamp"] = datetime.datetime.fromtimestamp(record["epoch"], JST).strftime("%Y-%m-%dT%H:%M:%S")
     # AIの判定より先に、ユーザー登録の抑制ルール・SSH許可リストを適用する
     # （「これは脅威ではない」と一度教えたものはAIの結果を待たず確実に黙らせる）
     _apply_ssh_whitelist(record)
@@ -499,7 +504,7 @@ async def api_test_notify_settings():
         "host": "sentinel-test",
         "category": "test",
         "message": "これはSENTINELからのテスト通知です。この文面が届いていればmailman連携は正常です。",
-        "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
+        "timestamp": datetime.datetime.now(JST).strftime("%Y-%m-%dT%H:%M:%S"),
         "severity": "critical",
     }, force=True)
     return {"ok": True}

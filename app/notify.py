@@ -9,6 +9,10 @@ import urllib.error
 import ai_triage
 import central_config as central_config_mod
 
+# コンテナはTZ設定に関わらずUTCで動くことが多いため、表示・保存する時刻は
+# システムのローカルタイムに依存せずJST固定で生成する。
+JST = datetime.timezone(datetime.timedelta(hours=9))
+
 
 class Notifier:
     def __init__(self, config: dict, ai_triage_config: dict | None = None, central_config: dict | None = None):
@@ -25,8 +29,8 @@ class Notifier:
         self.host_label = resolved["host_label"]
 
     def alert(self, category: str, message: str, severity: str = "warning"):
-        now = datetime.datetime.now()
-        ts = now.isoformat(timespec="seconds")
+        now = datetime.datetime.now(JST)
+        ts = now.strftime("%Y-%m-%dT%H:%M:%S")
 
         ai_summary = None
         ai_dismissed = False
