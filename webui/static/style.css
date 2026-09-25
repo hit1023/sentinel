@@ -457,7 +457,7 @@ body.alert-critical .topbar {
 }
 
 .feed-panel { height: 560px; display: flex; flex-direction: column; padding: 0; overflow: hidden; transition: height 0.2s ease; }
-.feed-panel.collapsed { height: auto; }
+.feed-panel.collapsed { height: auto; min-height: 0; }
 .feed-panel.collapsed .feed,
 .feed-panel.collapsed .term-prompt { display: none; }
 
