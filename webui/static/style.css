@@ -317,7 +317,20 @@ body.alert-critical .topbar {
 }
 
 .heatmap-panel { margin-bottom: 18px; min-height: 0; }
-.heat-row { display: flex; gap: 4px; }
+.heat-host-row { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+.heat-host-row:last-child { margin-bottom: 0; }
+.heat-host-label {
+  flex-shrink: 0;
+  width: 90px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--neon-green);
+  letter-spacing: 0.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.heat-row { display: flex; gap: 4px; flex: 1; }
 .heat-cell {
   flex: 1;
   height: 28px;

@@ -408,7 +408,7 @@ async function loadStats() {
 
     renderHostsList(data.hosts || []);
     renderCategoryBars(data.by_category || {});
-    renderHeatmap(data.heatmap || []);
+    renderHeatmap(data.heatmap_by_host || {});
     renderAuthIpRanking(data.top_auth_ips || []);
   } catch (e) {
     console.error("stats取得に失敗", e);
@@ -479,12 +479,7 @@ function renderCategoryBars(byCategory) {
   }
 }
 
-function renderHeatmap(heatmap) {
-  const container = document.getElementById("heatRow");
-  if (!container) return;
-  container.innerHTML = "";
-  if (!heatmap.length) return;
-
+function renderHeatmapRow(container, heatmap) {
   // 各時間帯の「最も重い重大度」で色を決め、その重大度の件数に応じて濃淡をつける
   // （critical優先 > warning > info、GitHubのコントリビューショングラフと同じ発想）
   const maxBySev = { critical: 1, warning: 1, info: 1 };
@@ -518,6 +513,31 @@ function renderHeatmap(heatmap) {
     const label = d.toLocaleString("ja-JP", { month: "numeric", day: "numeric", hour: "2-digit" });
     cell.title = `${label}時台\nCRITICAL: ${h.critical} / WARNING: ${h.warning} / INFO: ${h.info}`;
     container.appendChild(cell);
+  }
+}
+
+function renderHeatmap(heatmapByHost) {
+  const container = document.getElementById("heatmapHosts");
+  if (!container) return;
+  const hosts = Object.keys(heatmapByHost || {});
+  if (!hosts.length) {
+    container.innerHTML = '<div class="mono-dim">ホストからの報告待ち…</div>';
+    return;
+  }
+  container.innerHTML = "";
+  for (const host of hosts) {
+    const rowWrap = document.createElement("div");
+    rowWrap.className = "heat-host-row";
+    const label = document.createElement("div");
+    label.className = "heat-host-label";
+    label.textContent = host;
+    label.title = host;
+    const heatRow = document.createElement("div");
+    heatRow.className = "heat-row";
+    rowWrap.appendChild(label);
+    rowWrap.appendChild(heatRow);
+    container.appendChild(rowWrap);
+    renderHeatmapRow(heatRow, heatmapByHost[host]);
   }
 }
 

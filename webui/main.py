@@ -349,24 +349,36 @@ def api_stats():
     sev_counter = Counter(a.get("severity", "unknown") for a in last_24h)
     cat_counter = Counter(a.get("category", "unknown") for a in last_24h)
 
-    # 直近24時間を1時間単位のバケットに分け、時間帯別の検知傾向をヒートマップ表示できるようにする
+    # 直近24時間を1時間単位のバケットに分け、ホストごとの検知傾向をヒートマップ表示できるようにする
+    # （全ホスト合算だと、特定の1台だけが荒れている状況が他ホストの数字に埋もれてしまうため）
     now_hour = int(now // 3600)
-    hourly = defaultdict(Counter)
+    hourly_by_host = defaultdict(lambda: defaultdict(Counter))
+    hosts_seen = set()
     for a in last_24h:
+        host = a.get("host", "unknown")
+        hosts_seen.add(host)
         offset = now_hour - int(a.get("epoch", 0) // 3600)
         if 0 <= offset < 24:
             sev = a.get("severity", "info")
             sev = sev if sev in ("critical", "warning") else "info"
-            hourly[offset][sev] += 1
-    heatmap = []
-    for offset in range(23, -1, -1):
-        c = hourly.get(offset, Counter())
-        heatmap.append({
-            "hour_start": (now_hour - offset) * 3600,
-            "critical": c.get("critical", 0),
-            "warning": c.get("warning", 0),
-            "info": c.get("info", 0),
-        })
+            hourly_by_host[host][offset][sev] += 1
+
+    def _build_heatmap_row(host_buckets):
+        row = []
+        for offset in range(23, -1, -1):
+            c = host_buckets.get(offset, Counter())
+            row.append({
+                "hour_start": (now_hour - offset) * 3600,
+                "critical": c.get("critical", 0),
+                "warning": c.get("warning", 0),
+                "info": c.get("info", 0),
+            })
+        return row
+
+    heatmap_by_host = {
+        host: _build_heatmap_row(hourly_by_host[host])
+        for host in sorted(hosts_seen)
+    }
 
     # 認証失敗の発信元IPランキング（ログイン成功は除外し、ブルートフォース/
     # 存在しないユーザー/要注意ユーザーへの失敗試行だけを集計する）
@@ -419,7 +431,7 @@ def api_stats():
         "total_alerts_24h": len(last_24h),
         "by_severity": dict(sev_counter),
         "by_category": dict(cat_counter),
-        "heatmap": heatmap,
+        "heatmap_by_host": heatmap_by_host,
         "top_auth_ips": top_auth_ips,
         "server_time": now,
     }
