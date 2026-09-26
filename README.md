@@ -178,8 +178,9 @@ hit-linux-ids/
 
 ### Webアクセスログの有効化
 
-Webログの場所はホストごとに異なるため、既定では無効。Docker版では対象ホストの
-`.env`に、**ホスト上の絶対パス**を設定するだけで有効化される。複数指定はカンマ区切り。
+Webログの場所はホストごとに異なるため、既定では無効。対象ホストに
+`WEB_LOG_PATHS`で**ホスト上の絶対パス**を設定すると有効化される。複数指定はカンマ区切り。
+Docker版では`.env`に指定する。
 
 ```dotenv
 # Nginx Proxy Managerの/data/logsをホストにbind mountしている場合の例
@@ -187,8 +188,12 @@ WEB_LOG_PATHS=/home/hit/docker/nginx-proxy-manager/data/logs/proxy-host-*_access
 ```
 
 通常のNginxなら `WEB_LOG_PATHS=/var/log/nginx/*access.log` などを指定する。
-Docker版は既存のread-only `/hostfs` マウントから読み取り、ネイティブ版では
-`app/config.yaml`の`web_watch.enabled: true`と`web_watch.log_paths`を設定する。
+Docker版は既存のread-only `/hostfs` マウントから読み取る。ネイティブ版では
+`install-native.sh` / `install-macos.sh`の`--web-log-paths '/var/log/nginx/*access.log'`
+を指定するか、`/etc/sentinel/env`に`WEB_LOG_PATHS=...`を記述する。
+インストーラで再インストールした場合も、既存の`WEB_LOG_PATHS`は保持される。
+`/etc/sentinel/config.yaml`に`web_watch.enabled: true`と`web_watch.log_paths`を
+設定する方式も使えるが、既存の設定ファイルはバージョンアップ時に上書きされない。
 NPMの`[Client ...]`がプロキシやルーターのIPになる構成では、実IPがログに記録される
 ようにNPM側を設定する必要がある。設定後、エージェントを再起動する。
 ローテーション時に旧ファイルへ未読データが残っている場合、その部分は取得できない。
@@ -450,6 +455,8 @@ sudo bash install-macos.sh --webui-url http://<マネージャーのアドレス
 - 設定ファイルは`/etc/sentinel/config.yaml`、環境変数は`/etc/sentinel/env`、
   永続化データは`/var/lib/sentinel`に配置される。
 - `--version v0.2.0`のように特定バージョンを指定してインストール可能（既定は`latest`）。
+- GitHub Releaseは`v*`タグをpushしたときにビルドされる。mainへのマージだけでは
+  ネイティブ版の新しいバイナリは配布されない。今回のWeb監視はv0.1.5以降で利用可能。
 - root権限が必要（procnet_watch/integrity_watchが全プロセス・全ファイルシステムを
   見る必要があるため。Docker版の`cap_add: SYS_PTRACE` + `/:/hostfs:ro`と同等の権限
   レベルであり、ネイティブ化によって権限が絞られるわけではない点に注意）。
