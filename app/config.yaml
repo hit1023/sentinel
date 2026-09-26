@@ -55,6 +55,20 @@ auth_watch:
   # 社内LAN(プライベートIP)からのアクセスは常にスキップされる。
   geoip_enabled: true
 
+# --- Webアクセスログ監視 ---
+# ホストごとにログの場所が異なるため既定はOFF。
+# Docker運用では.envのWEB_LOG_PATHS=/path/to/*_access.logを設定すると有効化される。
+# パスはホスト上の絶対パス。Docker運用時はread-onlyの/hostfs以下へ自動変換する。
+# Nginx combined形式とNginx Proxy Manager形式に対応。
+web_watch:
+  enabled: false
+  log_paths: []
+  window_seconds: 300
+  scan_distinct_paths: 5
+  auth_failures: 10
+  not_found_distinct_paths: 30
+  alert_cooldown_seconds: 900
+
 # --- ファイル整合性監視（簡易AIDE） ---
 integrity_watch:
   enabled: true

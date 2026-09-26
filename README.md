@@ -88,6 +88,7 @@ hit-linux-ids/
 │   ├── paths.py                       # Docker/ネイティブ両対応のパス解決ヘルパー
 │   ├── VERSION                         # エージェントのバージョン番号
 │   ├── auth_watch.py                    # 認証ログ監視
+│   ├── web_watch.py                     # Nginx/NPM Webアクセスログ監視
 │   ├── integrity.py                      # ファイル整合性監視（簡易AIDE）
 │   ├── procnet_watch.py                   # プロセス・ネットワーク異常検知
 │   ├── outbound_watch.py                   # 外向き通信の異常検知
@@ -167,6 +168,30 @@ hit-linux-ids/
      いずれでも即CRITICAL**として扱う
    - `watch_paths`はglobパターンに対応（`/home/*/.ssh`で、rootだけでなく
      全ユーザーのSSH鍵を対象化できる）
+6. **Webアクセスログ監視**（`app/web_watch.py`、ホストごとに有効化）
+   - Nginxのcombined形式とNginx Proxy Managerのproxy-hostアクセスログ形式に対応
+   - 5分間に同じ送信元が複数の機密・管理パスを探索、認証画面で失敗を連発、
+     または多数の異なるURLで404を発生させた場合にWARNING通知
+   - IPはアクセスログに記録された値を使用し、未検証のX-Forwarded-Forは参照しない
+   - 初回はファイル末尾から開始。inodeとオフセットを保存して再起動・ログローテーションに対応
+   - WebアラートはAIコメントの対象になるが、AIによる自動静音化は行わない
+
+### Webアクセスログの有効化
+
+Webログの場所はホストごとに異なるため、既定では無効。Docker版では対象ホストの
+`.env`に、**ホスト上の絶対パス**を設定するだけで有効化される。複数指定はカンマ区切り。
+
+```dotenv
+# Nginx Proxy Managerの/data/logsをホストにbind mountしている場合の例
+WEB_LOG_PATHS=/home/hit/docker/nginx-proxy-manager/data/logs/proxy-host-*_access.log
+```
+
+通常のNginxなら `WEB_LOG_PATHS=/var/log/nginx/*access.log` などを指定する。
+Docker版は既存のread-only `/hostfs` マウントから読み取り、ネイティブ版では
+`app/config.yaml`の`web_watch.enabled: true`と`web_watch.log_paths`を設定する。
+NPMの`[Client ...]`がプロキシやルーターのIPになる構成では、実IPがログに記録される
+ようにNPM側を設定する必要がある。設定後、エージェントを再起動する。
+ローテーション時に旧ファイルへ未読データが残っている場合、その部分は取得できない。
 
 いずれも`Notifier.alert(category, message, severity)`を呼ぶだけの単純なインターフェースで、
 新しい検知器を追加する場合はこのメソッドを呼ぶWatcherクラスを1つ書いて`app/main.py`の
@@ -540,6 +565,8 @@ curl -sf http://localhost:8877/api/stats  # ヘルスチェック
 | `auth_watch.use_journalctl` | false | trueならjournalctl方式（journalマウントも要有効化） |
 | `auth_watch.sensitive_users` | root, admin, administrator, ubuntu | これらのユーザーへの失敗ログインは閾値未満でも即WARNING |
 | `auth_watch.geoip_enabled` | true | GeoIP+逆引き+見慣れない国からのログイン検知を有効化 |
+| `web_watch.enabled` / `WEB_LOG_PATHS` | false / "" | Webログ監視。Docker版はホストごとの`.env`で`WEB_LOG_PATHS`を指定すると有効化 |
+| `web_watch.window_seconds` / `scan_distinct_paths` / `auth_failures` / `not_found_distinct_paths` | 300 / 5 / 10 / 30 | Web探索・認証失敗・404探索の判定閾値 |
 | `integrity_watch.watch_paths` | `/etc`, `/root/.ssh`等 | 整合性監視対象（globパターン可） |
 | `integrity_watch.critical_patterns` | `*/.ssh/*` | 一致パスは新規/削除/改ざんいずれも即CRITICAL |
 | `procnet_watch.known_listen_ports` | （ホストごとに要調整） | 既知ポート一覧 |
