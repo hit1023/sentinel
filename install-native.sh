@@ -94,6 +94,9 @@ HOST_LABEL="$ARG_HOST_LABEL"
 CF_TOKEN="$ARG_CF_TOKEN"
 WEB_LOG_PATHS="$ARG_WEB_LOG_PATHS"
 # Upgrades must retain host-specific Web log paths even though env is rewritten.
+if [ -z "$CF_TOKEN" ] && [ -f "$CONFIG_DIR/env" ]; then
+  CF_TOKEN="$(sed -n 's/^CF_AI_GATEWAY_TOKEN=//p' "$CONFIG_DIR/env" | tail -n 1)"
+fi
 if [ -z "$WEB_LOG_PATHS" ] && [ -f "$CONFIG_DIR/env" ]; then
   WEB_LOG_PATHS="$(sed -n 's/^WEB_LOG_PATHS=//p' "$CONFIG_DIR/env" | tail -n 1)"
 fi
