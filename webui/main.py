@@ -9,6 +9,7 @@ import re
 import smtplib
 import sqlite3
 import time
+import urllib.error
 import urllib.request
 import uuid
 from collections import Counter, defaultdict
@@ -37,6 +38,14 @@ INGEST_TOKEN = os.environ.get("INGEST_TOKEN", "")
 # 何秒アップデートが無ければそのホストをオフライン扱いにするか
 # （エージェントのinterval_secondsの3倍程度を想定した既定値）
 HOST_STALE_SECONDS = int(os.environ.get("HOST_STALE_SECONDS", "300"))
+
+# --- デイリーレポートのAI総括用（agentのai_triageとは別に、webui単体で
+# Cloudflare AI Gatewayを呼ぶ。未設定でも動く：その場合はAI総括なしの
+# 統計のみのレポートを送る） ---
+CF_AI_ACCOUNT_ID = os.environ.get("CF_AI_GATEWAY_ACCOUNT_ID", "")
+CF_AI_GATEWAY_ID = os.environ.get("CF_AI_GATEWAY_ID", "")
+CF_AI_TOKEN = os.environ.get("CF_AI_GATEWAY_TOKEN", "")
+CF_AI_MODEL = os.environ.get("CF_AI_GATEWAY_MODEL", "@cf/meta/llama-3.1-8b-instruct-fast")
 
 app = FastAPI(title="hit-linux-ids WebUI")
 
@@ -119,6 +128,9 @@ NOTIFY_SETTINGS_DEFAULTS = {
     "smtp_user": "",
     "smtp_password": "",
     "smtp_use_tls": "true",
+    # --- デイリーレポート ---
+    "daily_report_enabled": "false",
+    "daily_report_hour": "9",  # JST、0-23
 }
 
 
@@ -189,6 +201,185 @@ def _send_via_smtp(settings: dict, to_list: list, subject: str, text: str):
         if settings["smtp_user"]:
             smtp.login(settings["smtp_user"], settings["smtp_password"])
         smtp.send_message(msg)
+
+
+# --- デイリーレポート ---
+
+DAILY_REPORT_SYSTEM_PROMPT = (
+    "あなたはLinuxサーバー群のセキュリティ監視を担当するSOCアナリストです。"
+    "渡される1日分のアラート統計(JSON: 重大度別件数、カテゴリ別件数、ホスト別件数、"
+    "CRITICALアラートの実例メッセージ)を読み、日本語で3〜5文程度の総括コメントを"
+    "書いてください。件数の規模感、特に注意すべき点（急増しているカテゴリ、特定ホストへの"
+    "集中、実例に不審な内容が含まれるか等）、総じて平常運転か注意が必要かの所感を含めてください。"
+    "前置き・見出し・箇条書き記号は禁止、地の文で簡潔に。"
+)
+
+
+def _get_daily_report_settings() -> dict:
+    return {
+        "enabled": _get_app_setting("daily_report_enabled") == "true",
+        "hour": int(_get_app_setting("daily_report_hour") or "9"),
+    }
+
+
+def _collect_period_stats(start_epoch: float, end_epoch: float) -> dict:
+    """指定期間[start_epoch, end_epoch)のアラートを集計する。
+    critical/warningはSQLite(全件正確)、infoはjsonl直近分ベース（/api/statsと同じ設計）。"""
+    with _db_connect() as conn:
+        sev_rows = conn.execute(
+            "SELECT severity, COUNT(*) as c FROM alerts WHERE epoch >= ? AND epoch < ? "
+            "AND severity IN ('critical','warning') GROUP BY severity",
+            (start_epoch, end_epoch),
+        ).fetchall()
+        host_rows = conn.execute(
+            "SELECT host, COUNT(*) as c FROM alerts WHERE epoch >= ? AND epoch < ? "
+            "AND severity IN ('critical','warning') GROUP BY host",
+            (start_epoch, end_epoch),
+        ).fetchall()
+        sample_rows = conn.execute(
+            "SELECT host, category, message, timestamp FROM alerts WHERE epoch >= ? AND epoch < ? "
+            "AND severity = 'critical' ORDER BY epoch DESC LIMIT 10",
+            (start_epoch, end_epoch),
+        ).fetchall()
+
+    period_alerts = [a for a in _read_alerts(5000) if start_epoch <= a.get("epoch", 0) < end_epoch]
+
+    sev_counter = Counter(
+        a.get("severity", "unknown") for a in period_alerts if a.get("severity") not in ("critical", "warning")
+    )
+    for row in sev_rows:
+        sev_counter[row["severity"]] = row["c"]
+
+    cat_counter = Counter(a.get("category", "unknown") for a in period_alerts)
+
+    host_counter = Counter()
+    for row in host_rows:
+        host_counter[row["host"] or "unknown"] += row["c"]
+
+    return {
+        "by_severity": dict(sev_counter),
+        "by_category": dict(cat_counter.most_common(8)),
+        "by_host": dict(host_counter),
+        "critical_samples": [dict(r) for r in sample_rows],
+        "total": sum(sev_counter.values()),
+    }
+
+
+def _generate_ai_daily_summary(stats: dict) -> str | None:
+    """未設定・失敗時はNoneを返す（呼び出し側はAI総括なしのレポートにフォールバックする）。"""
+    if not (CF_AI_ACCOUNT_ID and CF_AI_GATEWAY_ID and CF_AI_TOKEN):
+        return None
+    url = (
+        f"https://gateway.ai.cloudflare.com/v1/{CF_AI_ACCOUNT_ID}/"
+        f"{CF_AI_GATEWAY_ID}/workers-ai/{CF_AI_MODEL}"
+    )
+    payload = {
+        "messages": [
+            {"role": "system", "content": DAILY_REPORT_SYSTEM_PROMPT},
+            {"role": "user", "content": json.dumps(stats, ensure_ascii=False)},
+        ]
+    }
+    req = urllib.request.Request(
+        url,
+        data=json.dumps(payload).encode("utf-8"),
+        method="POST",
+        headers={
+            "Authorization": f"Bearer {CF_AI_TOKEN}",
+            "Content-Type": "application/json",
+            # CloudflareのエッジがPythonの既定User-Agentをボットとしてブロックするため
+            "User-Agent": (
+                "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+                "(KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
+            ),
+        },
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            body = json.loads(resp.read().decode("utf-8"))
+        return (body["result"]["response"] or "").strip() or None
+    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, OSError, KeyError, TypeError):
+        return None
+
+
+def _build_daily_report_text(stats: dict, ai_summary: str | None, period_label: str) -> tuple[str, str]:
+    sev = stats["by_severity"]
+    subject = (
+        f"[SENTINEL] デイリーレポート {period_label} "
+        f"(CRITICAL {sev.get('critical', 0)} / WARNING {sev.get('warning', 0)})"
+    )
+    lines = [f"SENTINEL デイリーレポート（{period_label}）", ""]
+    if ai_summary:
+        lines += ["🤖 AIによる総括:", ai_summary, ""]
+    lines += [
+        "— 集計 —",
+        f"CRITICAL: {sev.get('critical', 0)}",
+        f"WARNING: {sev.get('warning', 0)}",
+        f"INFO: {sev.get('info', 0)}",
+        f"合計: {stats['total']}",
+    ]
+    if stats["by_category"]:
+        lines += ["", "— カテゴリ別（上位） —"]
+        lines += [f"  {cat}: {c}" for cat, c in stats["by_category"].items()]
+    if stats["by_host"]:
+        lines += ["", "— ホスト別（CRITICAL/WARNING） —"]
+        lines += [f"  {host}: {c}" for host, c in stats["by_host"].items()]
+    if stats["critical_samples"]:
+        lines += ["", "— CRITICAL実例（最大10件） —"]
+        lines += [
+            f"  [{r['timestamp']}] {r['host']} / {r['category']}: {r['message']}"
+            for r in stats["critical_samples"]
+        ]
+    return subject, "\n".join(lines)
+
+
+def send_daily_report(is_test: bool = False) -> tuple[bool, str | None]:
+    settings = _get_notify_settings()
+    to_list = [a.strip() for a in settings["to"].split(",") if a.strip()]
+    if not to_list:
+        return False, "宛先メールアドレスが未設定です（🔔メール通知タブで設定してください）"
+    if not settings["smtp_host"] and not settings["webhook_url"]:
+        return False, "SMTP/Webhookのいずれも未設定です（🔔メール通知タブで設定してください）"
+
+    now = datetime.datetime.now(JST)
+    if is_test:
+        end, start = now, now - datetime.timedelta(hours=24)
+        period_label = "直近24時間・テスト送信"
+    else:
+        today0 = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        start, end = today0 - datetime.timedelta(days=1), today0
+        period_label = start.strftime("%Y-%m-%d")
+
+    stats = _collect_period_stats(start.timestamp(), end.timestamp())
+    ai_summary = _generate_ai_daily_summary(stats)
+    subject, text = _build_daily_report_text(stats, ai_summary, period_label)
+
+    try:
+        if settings["smtp_host"]:
+            _send_via_smtp(settings, to_list, subject, text)
+        else:
+            _send_via_webhook(settings["webhook_url"], to_list, subject, text, settings["from_addr"])
+    except Exception as e:
+        return False, str(e)
+    return True, None
+
+
+async def _daily_report_scheduler_loop():
+    """毎分チェックし、設定時刻(JST)になったら1日1回だけデイリーレポートを送る。"""
+    while True:
+        try:
+            settings = _get_daily_report_settings()
+            if settings["enabled"]:
+                now = datetime.datetime.now(JST)
+                today_str = now.strftime("%Y-%m-%d")
+                last_sent = _get_app_setting("daily_report_last_sent_date")
+                if now.hour == settings["hour"] and last_sent != today_str:
+                    ok, err = send_daily_report(is_test=False)
+                    _set_app_setting("daily_report_last_sent_date", today_str)
+                    if not ok:
+                        print(f"[daily_report] 送信失敗: {err}")
+        except Exception as e:
+            print(f"[daily_report] スケジューラでエラー: {e}")
+        await asyncio.sleep(60)
 
 
 def _send_critical_email(record: dict, force: bool = False):
@@ -571,6 +762,29 @@ async def api_test_notify_settings():
     return {"ok": True}
 
 
+@app.get("/api/daily-report-settings")
+def api_get_daily_report_settings():
+    return _get_daily_report_settings()
+
+
+@app.post("/api/daily-report-settings")
+async def api_set_daily_report_settings(payload: dict):
+    if "enabled" in payload:
+        _set_app_setting("daily_report_enabled", "true" if payload["enabled"] else "false")
+    if "hour" in payload:
+        hour = max(0, min(23, int(payload["hour"])))
+        _set_app_setting("daily_report_hour", str(hour))
+    return {"ok": True, "settings": _get_daily_report_settings()}
+
+
+@app.post("/api/daily-report-settings/test")
+async def api_test_daily_report_settings():
+    ok, err = send_daily_report(is_test=True)
+    if not ok:
+        raise HTTPException(status_code=400, detail=err or "送信に失敗しました")
+    return {"ok": True}
+
+
 @app.post("/api/ingest/status")
 async def ingest_status(payload: dict, authorization: str | None = Header(default=None)):
     _check_token(authorization)
@@ -866,6 +1080,11 @@ async def ws_alerts(ws: WebSocket):
                     await ws.send_json(record)
     except WebSocketDisconnect:
         pass
+
+
+@app.on_event("startup")
+async def _on_startup():
+    asyncio.create_task(_daily_report_scheduler_loop())
 
 
 app.mount("/", StaticFiles(directory=os.path.join(os.path.dirname(__file__), "static"), html=True), name="static")

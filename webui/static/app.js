@@ -734,6 +734,7 @@ document.getElementById("openSettingsBtn")?.addEventListener("click", () => {
   document.getElementById("settingsOverlay").style.display = "flex";
   loadSshWhitelist();
   loadNotifySettings();
+  loadDailyReportSettings();
   loadReleases();
 });
 
@@ -910,6 +911,66 @@ document.getElementById("testNotifySettingsBtn")?.addEventListener("click", asyn
     status.textContent = "テストメールを送信しました";
   } catch (e) {
     console.error("テスト送信に失敗", e);
+    status.textContent = `失敗: ${e.message}`;
+  } finally {
+    setTimeout(() => { status.textContent = ""; }, 4000);
+  }
+});
+
+// --- デイリーレポート ---
+async function loadDailyReportSettings() {
+  const hourSelect = document.getElementById("dailyReportHour");
+  if (hourSelect && !hourSelect.options.length) {
+    for (let h = 0; h < 24; h++) {
+      const opt = document.createElement("option");
+      opt.value = String(h);
+      opt.textContent = `${String(h).padStart(2, "0")}:00`;
+      hourSelect.appendChild(opt);
+    }
+  }
+  try {
+    const res = await fetch("/api/daily-report-settings");
+    const data = await res.json();
+    document.getElementById("dailyReportEnabled").checked = !!data.enabled;
+    hourSelect.value = String(data.hour ?? 9);
+  } catch (e) {
+    console.error("デイリーレポート設定の取得に失敗", e);
+  }
+}
+
+document.getElementById("saveDailyReportBtn")?.addEventListener("click", async () => {
+  const status = document.getElementById("dailyReportStatus");
+  status.textContent = "保存中…";
+  try {
+    await fetch("/api/daily-report-settings", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        enabled: document.getElementById("dailyReportEnabled").checked,
+        hour: parseInt(document.getElementById("dailyReportHour").value, 10),
+      }),
+    });
+    status.textContent = "保存しました";
+  } catch (e) {
+    console.error("デイリーレポート設定の保存に失敗", e);
+    status.textContent = "保存に失敗しました";
+  } finally {
+    setTimeout(() => { status.textContent = ""; }, 2500);
+  }
+});
+
+document.getElementById("testDailyReportBtn")?.addEventListener("click", async () => {
+  const status = document.getElementById("dailyReportStatus");
+  status.textContent = "送信中…";
+  try {
+    const res = await fetch("/api/daily-report-settings/test", { method: "POST" });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || "送信失敗");
+    }
+    status.textContent = "テストレポートを送信しました";
+  } catch (e) {
+    console.error("デイリーレポートのテスト送信に失敗", e);
     status.textContent = `失敗: ${e.message}`;
   } finally {
     setTimeout(() => { status.textContent = ""; }, 4000);

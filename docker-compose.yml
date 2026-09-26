@@ -60,5 +60,10 @@ services:
       - IDS_DATA_DIR=/data
       # このトークンをagent側のCENTRAL_INGEST_TOKENと一致させる
       - INGEST_TOKEN=${CENTRAL_INGEST_TOKEN:-}
+      # デイリーレポートのAI総括用（agentのai_triageと同じCloudflareアカウント/
+      # ゲートウェイを使い回せる。未設定でもレポート自体は統計のみで送信される）
+      - CF_AI_GATEWAY_ACCOUNT_ID=${CF_AI_GATEWAY_ACCOUNT_ID:-}
+      - CF_AI_GATEWAY_ID=${CF_AI_GATEWAY_ID:-}
+      - CF_AI_GATEWAY_TOKEN=${CF_AI_GATEWAY_TOKEN:-}
     volumes:
       - ./data:/data

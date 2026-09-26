@@ -132,6 +132,23 @@
             <span class="mini-btn" id="testNotifySettingsBtn">テスト送信</span>
             <span class="mono-dim" id="notifySettingsStatus"></span>
           </div>
+
+          <p class="mono-dim" style="margin:20px 0 0; font-size:11px; border-top:1px solid var(--border); padding-top:14px;">— 📊 デイリーレポート —</p>
+          <p class="mono-dim" style="margin:6px 0 12px; font-size:11px;">
+            1日1回、直近24時間の検知統計をAIが総括したメールを送ります
+            （送信先・SMTP/Webhookは上の設定を共有します）。
+          </p>
+          <label class="settings-check">
+            <input type="checkbox" id="dailyReportEnabled"> デイリーレポートを送信する
+          </label>
+          <label class="settings-label">送信時刻（JST、毎日この時になったら送信）</label>
+          <select id="dailyReportHour" class="dl-select"></select>
+
+          <div class="settings-actions">
+            <span class="mini-btn" id="saveDailyReportBtn">保存</span>
+            <span class="mini-btn" id="testDailyReportBtn">テスト送信</span>
+            <span class="mono-dim" id="dailyReportStatus"></span>
+          </div>
         </div>
       </div>
 

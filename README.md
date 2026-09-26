@@ -341,6 +341,31 @@ SMTPだけで動くようにしてあるので、cloneしてすぐ使える。
 （このWebUI自体がLAN内の信頼された利用者向けに無認証で動く前提のため、他の設定項目と
 同じ扱い）。
 
+#### 📊 デイリーレポート
+
+1日1回、指定した時刻(JST)に直近24時間分の検知統計をメールで送る。送信先・
+SMTP/Webhook設定は🔔メール通知タブと共有する（通知自体（CRITICAL即時メール）を
+OFFにしていても、デイリーレポートだけ独立してONにできる）。
+
+設定項目:
+
+- **デイリーレポートを送信する**（既定OFF）
+- **送信時刻**（JST、0〜23時から選択。既定9時）
+
+メール本文には重大度別件数・カテゴリ別件数・ホスト別件数・CRITICAL実例（最大10件）に
+加えて、Cloudflare AI Gateway経由でAIが生成した3〜5文程度の日本語総括コメントが
+先頭に入る。AI総括はagentの`ai_triage`とは別に、WebUIコンテナ自身の環境変数
+（`CF_AI_GATEWAY_ACCOUNT_ID`/`CF_AI_GATEWAY_ID`/`CF_AI_GATEWAY_TOKEN`、agentと
+同じCloudflareアカウント/ゲートウェイを使い回せる）を使う。**未設定でもレポート自体は
+統計のみで送信される**（AI総括なしにフォールバックするだけで、機能全体は止まらない）。
+
+「テスト送信」ボタンで、設定時刻を待たずその場で直近24時間分のレポートを送れる
+（`POST /api/daily-report-settings/test`）。
+
+実装は`webui/main.py`の`_daily_report_scheduler_loop()`（毎分チェックし、設定時刻の
+時になった最初のタイミングで1回だけ送信、送信済み日付を`app_settings`に記録して
+二重送信を防ぐ）と`send_daily_report()`。設定は`GET/POST /api/daily-report-settings`。
+
 #### ⬇ ダウンロード
 
 新しいホストにエージェントを導入するためのインストーラ配布ページ。GitHub Releases
@@ -447,6 +472,8 @@ SMTPだけで動くようにしてあるので、cloneしてすぐ使える。
 | `GET /api/alerts/history?severity=&host=&category=&since_epoch=&limit=` | **長期監査用**。CRITICAL/WARNING（元severity基準、AI格下げ後も含む）だけをSQLiteから検索 |
 | `GET /api/releases` | エージェント配布ページ用。GitHub Releases一覧（5分キャッシュ） |
 | `GET /api/central-config` | エージェント配布ページ用。共有Ingestトークンの取得 |
+| `GET/POST /api/daily-report-settings` | デイリーレポートの有効/無効・送信時刻(JST)の取得・保存 |
+| `POST /api/daily-report-settings/test` | デイリーレポートの即時テスト送信 |
 | `WS /ws/alerts` | `alerts.jsonl`の追記をtailしてリアルタイム配信 |
 
 ### データ永続化の設計（2層構成）
