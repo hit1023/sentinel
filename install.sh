@@ -23,6 +23,7 @@ ARG_WEBUI_URL=""
 ARG_TOKEN=""
 ARG_HOST_LABEL=""
 ARG_CF_TOKEN=""
+ARG_WEB_LOG_PATHS=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -32,6 +33,7 @@ while [[ $# -gt 0 ]]; do
     --token) ARG_TOKEN="$2"; shift 2 ;;
     --host-label) ARG_HOST_LABEL="$2"; shift 2 ;;
     --cf-ai-token) ARG_CF_TOKEN="$2"; shift 2 ;;
+    --web-log-paths) ARG_WEB_LOG_PATHS="$2"; shift 2 ;;
     -h|--help)
       grep '^#' "$0" | sed 's/^# \{0,1\}//'
       exit 0
@@ -83,6 +85,13 @@ WEBUI_URL="$ARG_WEBUI_URL"
 TOKEN="$ARG_TOKEN"
 HOST_LABEL="$ARG_HOST_LABEL"
 CF_TOKEN="$ARG_CF_TOKEN"
+WEB_LOG_PATHS="$ARG_WEB_LOG_PATHS"
+if [ -z "$CF_TOKEN" ] && [ -f .env ]; then
+  CF_TOKEN="$(sed -n 's/^CF_AI_GATEWAY_TOKEN=//p' .env | tail -n 1)"
+fi
+if [ -z "$WEB_LOG_PATHS" ] && [ -f .env ]; then
+  WEB_LOG_PATHS="$(sed -n 's/^WEB_LOG_PATHS=//p' .env | tail -n 1)"
+fi
 
 if [ "$SERVER_MODE" = true ]; then
   echo "→ 司令塔モード（このホスト自身がWebUIも兼ねる）"
@@ -112,7 +121,8 @@ fi
   echo "CENTRAL_WEBUI_URL=$WEBUI_URL"
   echo "CENTRAL_INGEST_TOKEN=$TOKEN"
   echo "CENTRAL_HOST_LABEL=$HOST_LABEL"
-  [ -n "$CF_TOKEN" ] && echo "CF_AI_GATEWAY_TOKEN=$CF_TOKEN"
+  if [ -n "$CF_TOKEN" ]; then echo "CF_AI_GATEWAY_TOKEN=$CF_TOKEN"; fi
+  if [ -n "$WEB_LOG_PATHS" ]; then echo "WEB_LOG_PATHS=$WEB_LOG_PATHS"; fi
 } > .env
 chmod 600 .env
 echo "✅ .env を書き込みました（このファイルはgit管理外です）"

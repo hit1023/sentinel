@@ -27,6 +27,7 @@ ARG_WEBUI_URL=""
 ARG_TOKEN=""
 ARG_HOST_LABEL=""
 ARG_CF_TOKEN=""
+ARG_WEB_LOG_PATHS=""
 ARG_VERSION="latest"
 
 while [[ $# -gt 0 ]]; do
@@ -36,6 +37,7 @@ while [[ $# -gt 0 ]]; do
     --token) ARG_TOKEN="$2"; shift 2 ;;
     --host-label) ARG_HOST_LABEL="$2"; shift 2 ;;
     --cf-ai-token) ARG_CF_TOKEN="$2"; shift 2 ;;
+    --web-log-paths) ARG_WEB_LOG_PATHS="$2"; shift 2 ;;
     --version) ARG_VERSION="$2"; shift 2 ;;
     -h|--help)
       grep '^#' "$0" | sed 's/^# \{0,1\}//'
@@ -90,6 +92,14 @@ WEBUI_URL="$ARG_WEBUI_URL"
 TOKEN="$ARG_TOKEN"
 HOST_LABEL="$ARG_HOST_LABEL"
 CF_TOKEN="$ARG_CF_TOKEN"
+WEB_LOG_PATHS="$ARG_WEB_LOG_PATHS"
+# Upgrades must retain host-specific Web log paths even though env is rewritten.
+if [ -z "$CF_TOKEN" ] && [ -f "$CONFIG_DIR/env" ]; then
+  CF_TOKEN="$(sed -n 's/^CF_AI_GATEWAY_TOKEN=//p' "$CONFIG_DIR/env" | tail -n 1)"
+fi
+if [ -z "$WEB_LOG_PATHS" ] && [ -f "$CONFIG_DIR/env" ]; then
+  WEB_LOG_PATHS="$(sed -n 's/^WEB_LOG_PATHS=//p' "$CONFIG_DIR/env" | tail -n 1)"
+fi
 
 [ -z "$WEBUI_URL" ] && prompt WEBUI_URL "司令塔WebUIのURL（例: http://192.168.0.18:8877）" ""
 [ -z "$TOKEN" ] && prompt TOKEN "共有Ingestトークン（司令塔側のCENTRAL_INGEST_TOKENと同じ値）" ""
@@ -148,7 +158,8 @@ fi
   echo "CENTRAL_WEBUI_URL=$WEBUI_URL"
   echo "CENTRAL_INGEST_TOKEN=$TOKEN"
   echo "CENTRAL_HOST_LABEL=$HOST_LABEL"
-  [ -n "$CF_TOKEN" ] && echo "CF_AI_GATEWAY_TOKEN=$CF_TOKEN"
+  if [ -n "$CF_TOKEN" ]; then echo "CF_AI_GATEWAY_TOKEN=$CF_TOKEN"; fi
+  if [ -n "$WEB_LOG_PATHS" ]; then echo "WEB_LOG_PATHS=$WEB_LOG_PATHS"; fi
 } > "$CONFIG_DIR/env"
 chmod 600 "$CONFIG_DIR/env"
 echo "✅ $CONFIG_DIR/env を書き込みました"

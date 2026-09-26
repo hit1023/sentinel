@@ -47,7 +47,9 @@ class Notifier:
         if result:
             ai_summary = result.comment
             auto_dismiss = ai_triage.get_config(self.ai_triage_config)["auto_dismiss_non_threats"]
-            if not result.is_threat and auto_dismiss:
+            # Web logs contain attacker-controlled URLs. AI may explain an alert,
+            # but untrusted log content must not silently downgrade its severity.
+            if not result.is_threat and auto_dismiss and category != "web_watch":
                 effective_severity = "info"
                 ai_dismissed = True
 

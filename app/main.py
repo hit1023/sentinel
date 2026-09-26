@@ -12,6 +12,7 @@ from procnet_watch import ProcNetWatcher
 from status_writer import report_status
 from updater import UpdateChecker
 from version import get_version
+from web_watch import WebWatcher
 
 # Docker運用では/app/config.yaml、ネイティブ運用(systemd/launchd)では
 # /etc/sentinel/config.yamlを既定とする。Dockerfile/compose側は明示的に
@@ -33,6 +34,8 @@ def main():
     watchers = []
     if config.get("auth_watch", {}).get("enabled", True):
         watchers.append(AuthWatcher(config["auth_watch"], notifier))
+    if config.get("web_watch", {}).get("enabled", False) or os.environ.get("WEB_LOG_PATHS"):
+        watchers.append(WebWatcher(config.get("web_watch", {}), notifier))
     if config.get("integrity_watch", {}).get("enabled", True):
         watchers.append(IntegrityWatcher(config["integrity_watch"], notifier))
     if config.get("procnet_watch", {}).get("enabled", True):

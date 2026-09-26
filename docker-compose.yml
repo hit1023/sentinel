@@ -22,6 +22,9 @@ services:
       - CENTRAL_WEBUI_URL=${CENTRAL_WEBUI_URL:-}
       # ダッシュボード上でのホスト表示名。空ならOSのホスト名を自動使用。
       - CENTRAL_HOST_LABEL=${CENTRAL_HOST_LABEL:-}
+      # Comma-separated absolute host paths/globs to Nginx/NPM access logs.
+      # Presence of this setting enables web_watch on this host.
+      - WEB_LOG_PATHS=${WEB_LOG_PATHS:-}
       # config.yaml自体はコード共通化のため実パス表記(/etc等)で書かれているので、
       # Docker運用時だけ下記プレフィックスを前置してホストの実体を見に行く
       # (ネイティブ運用のsystemd/launchdではこれらは未設定=プレフィックスなしになる)。
