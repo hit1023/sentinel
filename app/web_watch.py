@@ -28,6 +28,7 @@ SENSITIVE = re.compile(
     r'config\.php$|\.aws(?:/|$))', re.I
 )
 LOGIN = re.compile(r'(^|/)(login|signin|sign-in|wp-login\.php|auth|session)(/|\.|$)', re.I)
+TRAVERSAL = re.compile(r'(^|[=/])\.\.(?:/|\\)')
 
 
 def parse_line(line):
@@ -41,12 +42,14 @@ def parse_line(line):
         timestamp = datetime.strptime(data["date"], "%d/%b/%Y:%H:%M:%S %z").timestamp()
         status = int(data["status"])
         target = data["target"]
+        decoded = unquote(target).lower()
         path = unquote(urlsplit(target).path).lower()
+        traversal = bool(TRAVERSAL.search(decoded))
     except (ValueError, OverflowError):
         return None
     if not path.startswith("/"):
         return None
-    return timestamp, ip, data.get("host") or "", path, status
+    return timestamp, ip, data.get("host") or "", path, status, traversal
 
 
 class WebWatcher:
@@ -105,20 +108,22 @@ class WebWatcher:
         if timestamp - self._last_alert.get(key, float("-inf")) < self.cooldown:
             return
         self._last_alert[key] = timestamp
-        label = {"scan": "機密・管理パスの探索", "auth": "認証画面への連続失敗", "404": "多数の未存在パスへのアクセス"}[rule]
+        label = {"scan": "機密・管理パスの探索", "auth": "認証画面への連続失敗", "404": "多数の未存在パスへのアクセス", "traversal": "パスの境界越えを試行"}[rule]
         self.notifier.alert("web_watch", f"Webアクセス異常: {label} ip={ip} 件数={count} 期間={self.window}秒", "warning")
 
     def _process(self, event):
-        timestamp, ip, host, path, status = event
+        timestamp, ip, host, path, status, traversal = event
         events = self._events[ip]
-        events.append((timestamp, host, path, status))
+        events.append((timestamp, host, path, status, traversal))
         while events and timestamp - events[0][0] > self.window:
             events.popleft()
         if len(events) > 1000:
             events.popleft()
-        scan = {(h, p) for _, h, p, _ in events if SENSITIVE.search(p)}
-        auth = sum(1 for _, _, p, s in events if LOGIN.search(p) and s in (401, 403, 429))
-        not_found = {(h, p) for _, h, p, s in events if s == 404}
+        scan = {(h, p) for _, h, p, _, _ in events if SENSITIVE.search(p)}
+        auth = sum(1 for _, _, p, s, _ in events if LOGIN.search(p) and s in (401, 403, 429))
+        not_found = {(h, p) for _, h, p, s, _ in events if s == 404}
+        if traversal:
+            self._alert(ip, "traversal", 1, timestamp)
         if len(scan) >= self.scan_threshold:
             self._alert(ip, "scan", len(scan), timestamp)
         if auth >= self.auth_threshold:

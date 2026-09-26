@@ -27,12 +27,13 @@ class Notifier:
 
 class WebWatchTests(unittest.TestCase):
     def test_parses_nginx_and_npm_without_trusting_forwarded_headers(self):
-        self.assertEqual(web_watch.parse_line(common("/.env?token=abc"))[3:], ("/.env", 404))
+        self.assertEqual(web_watch.parse_line(common("/.env?token=abc"))[3:], ("/.env", 404, False))
         npm = ('[26/Sep/2026:12:00:00 +0900] - 404 404 - GET https app.example '
                '"/.git/config" [Client 2001:db8::1] [Length 12] [Gzip -] '
                '[Sent-to 10.0.0.1] "bot" "-"\n')
         self.assertEqual(web_watch.parse_line(npm)[1:5],
                          ("2001:db8::1", "app.example", "/.git/config", 404))
+        self.assertTrue(web_watch.parse_line(common("/files?name=..%2Fsecrets%2Fkeys.txt"))[-1])
         self.assertIsNone(web_watch.parse_line("not an access log"))
 
     def test_initial_tail_partial_line_rotation_and_scan_detection(self):

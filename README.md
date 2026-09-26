@@ -172,6 +172,8 @@ hit-linux-ids/
    - Nginxのcombined形式とNginx Proxy Managerのproxy-hostアクセスログ形式に対応
    - 5分間に同じ送信元が複数の機密・管理パスを探索、認証画面で失敗を連発、
      または多数の異なるURLで404を発生させた場合にWARNING通知
+   - URLやクエリ内の`../`（パストラバーサル試行）は1回でWARNING通知。
+     URLの生文字列はアラートへ含めない
    - IPはアクセスログに記録された値を使用し、未検証のX-Forwarded-Forは参照しない
    - 初回はファイル末尾から開始。inodeとオフセットを保存して再起動・ログローテーションに対応
    - WebアラートはAIコメントの対象になるが、AIによる自動静音化は行わない
@@ -197,6 +199,33 @@ Docker版は既存のread-only `/hostfs` マウントから読み取る。ネイ
 NPMの`[Client ...]`がプロキシやルーターのIPになる構成では、実IPがログに記録される
 ようにNPM側を設定する必要がある。設定後、エージェントを再起動する。
 ローテーション時に旧ファイルへ未読データが残っている場合、その部分は取得できない。
+
+### Sentinel Labで検知を試す
+
+`lab/server.py`は、**実ファイルを読まない**模擬Webサーバー。ブラウザからの
+リクエストをNginx Proxy Manager形式のアクセスログへ記録する。Lab自身は
+SentinelのアラートAPIを呼ばないため、WebUIに警告が出ればエージェントの
+`web_watch`→通知→マネージャーの経路を通ったことを確認できる。
+
+監視したいホストで、まずLabを起動する（標準ではlocalhostで待ち受ける）。
+
+```bash
+python3 lab/server.py --log-file /var/tmp/sentinel-lab/access.log
+```
+
+次に**同じホスト**のエージェントへ
+`WEB_LOG_PATHS=/var/tmp/sentinel-lab/access.log`を設定して再起動する。
+Docker版は`.env`に追記、ネイティブ版はインストーラの`--web-log-paths`か
+`/etc/sentinel/env`を使う。Lab起動後にログファイルが作られてから、
+エージェントの初回監視を行うこと。
+
+ブラウザで`http://localhost:8899/`を開き、「穴に入る」「修正後を試す」で
+パスの境界を比べる。「穴に入る」は境界越えの試行として警告される。
+「模擬探索を実行する」では5件のアクセスが記録され、探索の警告になる。
+次の監視周期（既定60秒）の後、Sentinel WebUIの`web_watch`アラートを見る。
+リモートホストで試すときはSSHポート転送などでlocalhostの画面へ接続する。
+この実験は実サイトの脆弱性を検査せず、Labのログパーサー・検知・通知の
+一連の動作を確認するためのもの。
 
 いずれも`Notifier.alert(category, message, severity)`を呼ぶだけの単純なインターフェースで、
 新しい検知器を追加する場合はこのメソッドを呼ぶWatcherクラスを1つ書いて`app/main.py`の
