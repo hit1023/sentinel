@@ -98,6 +98,10 @@ integrity_watch:
     # SENTINEL自身の設定ファイル。運用でknown_process_keywords等を編集するたびに
     # 自分自身の変更を「改ざんの疑い」としてCRITICAL通知してしまうため対象外にする
     - "*/etc/sentinel/config.yaml"
+    # snapdが自動生成するsystemdユニット定義（# Auto-generated, DO NOT EDIT）。
+    # snapパッケージのリフレッシュ（自動更新）のたびに削除→再生成されるため、
+    # 改ざんではなく正規のOS更新。
+    - "*/etc/systemd/*/snap.*"
   # ここに一致するパスは、新規作成・削除であっても（通常はwarning止まりのところ）
   # 即座にcriticalとして扱う。SSH公開鍵は不正ログインの前兆として特に重大なため。
   critical_patterns:
