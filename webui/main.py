@@ -18,6 +18,8 @@ from email.message import EmailMessage
 from fastapi import BackgroundTasks, FastAPI, Header, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
 
+import vuln
+
 # コンテナはTZ設定に関わらずUTCで動くことが多いため、表示・保存する時刻は
 # システムのローカルタイムに依存せずJST固定で生成する。
 JST = datetime.timezone(datetime.timedelta(hours=9))
@@ -583,6 +585,34 @@ def _write_hosts_status(data: dict):
     os.replace(tmp_path, HOSTS_STATUS_JSON)
 
 
+def _emit_internal_alert(category: str, message: str, severity: str, host: str):
+    """マネージャー自身が生成するアラート（脆弱性照合など）を、エージェントからの
+    ingestと同じ経路（抑制ルール→jsonl→監査DB→CRITICALメール）に流す。
+    ダッシュボードのライブフィードはjsonlをtailしているので、そのまま表示される。"""
+    now = time.time()
+    record = {
+        "id": uuid.uuid4().hex,
+        "timestamp": datetime.datetime.fromtimestamp(now, JST).strftime("%Y-%m-%dT%H:%M:%S"),
+        "epoch": now,
+        "host": host,
+        "category": category,
+        "severity": severity,
+        "original_severity": None,
+        "message": message,
+        "ai_summary": None,
+        "ai_dismissed": False,
+    }
+    _apply_suppressions(record)
+    _append_alert(record)
+    _persist_important(record)
+    if record.get("severity") == "critical":
+        # 照合はバックグラウンドスレッドで動いているので、ここで同期送信してよい
+        _send_critical_email(record)
+
+
+vuln_scanner = vuln.VulnScanner(_db_connect, _emit_internal_alert, _get_app_setting, _set_app_setting)
+
+
 @app.post("/api/ingest/alert")
 async def ingest_alert(
     payload: dict,
@@ -793,6 +823,44 @@ async def ingest_status(payload: dict, authorization: str | None = Header(defaul
     hosts[host] = {**payload, "host": host, "received_at": time.time()}
     _write_hosts_status(hosts)
     return {"ok": True}
+
+
+@app.post("/api/ingest/packages")
+async def ingest_packages(
+    payload: dict,
+    background_tasks: BackgroundTasks,
+    authorization: str | None = Header(default=None),
+):
+    _check_token(authorization)
+    changed = vuln_scanner.store_inventory(payload)
+    # パッケージ構成が変わったとき（apt upgrade後など）だけ即時に再照合する。
+    # 照合は外部APIを叩いて数十秒〜数分かかるため、レスポンスは待たせない。
+    if changed:
+        background_tasks.add_task(vuln_scanner.run_due)
+    return {"ok": True, "rescan": changed}
+
+
+@app.get("/api/vulns")
+def api_vulns(host: str | None = None):
+    return vuln_scanner.summary(host)
+
+
+@app.post("/api/vulns/rescan")
+def api_vulns_rescan(background_tasks: BackgroundTasks):
+    # KEVの再ダウンロードも含めて全ホストを強制的に再照合する
+    background_tasks.add_task(vuln_scanner.run_due, True)
+    return {"ok": True}
+
+
+async def _vuln_scheduler_loop():
+    """1時間ごとに、KEVの日次同期と、24時間以上照合していないホストの再照合を行う
+    （パッケージが変わらなくても、新しく公開されたCVEやKEV追加を拾うため）。"""
+    while True:
+        try:
+            await asyncio.to_thread(vuln_scanner.run_due)
+        except Exception as e:
+            print(f"[vuln] スケジューラでエラー: {e}")
+        await asyncio.sleep(3600)
 
 
 GITHUB_RELEASES_REPO = os.environ.get("GITHUB_RELEASES_REPO", "hit1023/sentinel")
@@ -1085,6 +1153,7 @@ async def ws_alerts(ws: WebSocket):
 @app.on_event("startup")
 async def _on_startup():
     asyncio.create_task(_daily_report_scheduler_loop())
+    asyncio.create_task(_vuln_scheduler_loop())
 
 
 app.mount("/", StaticFiles(directory=os.path.join(os.path.dirname(__file__), "static"), html=True), name="static")

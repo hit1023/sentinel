@@ -8,6 +8,7 @@ from auth_watch import AuthWatcher
 from integrity import IntegrityWatcher
 from notify import Notifier
 from outbound_watch import OutboundWatcher
+from package_watch import PackageWatcher
 from procnet_watch import ProcNetWatcher
 from status_writer import report_status
 from updater import UpdateChecker
@@ -46,6 +47,11 @@ def main():
         # procnet_watchの既知リスニングポート一覧をそのまま継承する
         outbound_config["local_service_ports"] = config.get("procnet_watch", {}).get("known_listen_ports", [])
         watchers.append(OutboundWatcher(outbound_config, notifier))
+
+    # 既存ホストの/etc/sentinel/config.yamlはインストーラーが上書きしないため、
+    # セクションが無くても有効扱いにする（無効化したい場合だけ enabled: false を書く）
+    if config.get("package_watch", {}).get("enabled", True):
+        watchers.append(PackageWatcher(config.get("package_watch", {}), notifier, central_config))
 
     updater = UpdateChecker(config.get("updater", {}), notifier)
 

@@ -958,6 +958,50 @@ body.alert-critical .topbar {
   to { opacity: 1; transform: translateY(0); }
 }
 
+/* --- VULNERABILITIES --- */
+.vuln-row { display: block; margin-bottom: 18px; }
+.vuln-panel { min-height: 0; }
+.vuln-head-right { display: flex; align-items: center; gap: 10px; letter-spacing: 0.5px; }
+.vuln-host-stat { font-size: 11px; color: var(--text-dim); white-space: nowrap; }
+.vuln-host-stat b { color: #d7f6ff; }
+.vuln-host-stat.kev b { color: var(--neon-red); }
+.vuln-host-stat.high b { color: var(--neon-amber); }
+.vuln-filters {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 12px;
+  margin: 14px 0 10px; font-size: 11px; color: var(--text-dim);
+}
+.vuln-filters select {
+  background: var(--bg); color: #d7f6ff; border: 1px solid var(--border);
+  border-radius: 4px; padding: 3px 6px; font-family: inherit; font-size: 11px;
+}
+.vuln-filters label { display: flex; align-items: center; gap: 4px; cursor: pointer; }
+.vuln-table-wrap { max-height: 420px; overflow: auto; }
+.vuln-table { width: 100%; border-collapse: collapse; font-size: 11px; }
+.vuln-table th {
+  position: sticky; top: 0; background: var(--bg-panel); text-align: left;
+  color: var(--neon-cyan); letter-spacing: 1px; font-weight: 400;
+  padding: 6px 8px; border-bottom: 1px solid var(--border);
+}
+.vuln-table td {
+  padding: 5px 8px; border-bottom: 1px solid rgba(255,255,255,0.05);
+  vertical-align: top; white-space: nowrap;
+}
+.vuln-table td.vuln-summary {
+  color: var(--text-dim); max-width: 420px; overflow: hidden; text-overflow: ellipsis;
+}
+#vulnHosts .host-row { flex-wrap: wrap; row-gap: 4px; }
+.vuln-table a { color: #d7f6ff; text-decoration: none; border-bottom: 1px dotted var(--text-dim); }
+.vuln-table a:hover { color: var(--neon-cyan); }
+.vuln-kev {
+  display: inline-block; font-size: 9px; font-weight: 700; color: var(--bg);
+  background: var(--neon-red); border-radius: 3px; padding: 0 4px; margin-left: 4px;
+}
+.prio-critical { color: var(--neon-red); font-weight: 700; }
+.prio-high { color: var(--neon-amber); font-weight: 700; }
+.prio-medium { color: #d7f6ff; }
+.prio-low, .prio-negligible, .prio-unknown { color: var(--text-dim); }
+.vuln-nofix { color: var(--text-dim); font-style: italic; }
+
 @media (max-width: 900px) {
   .stat-row { grid-template-columns: repeat(2, 1fr); }
   .main-grid { grid-template-columns: 1fr; }

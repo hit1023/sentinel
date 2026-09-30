@@ -1053,6 +1053,121 @@ document.getElementById("reapplySuppressionsBtn")?.addEventListener("click", asy
   }
 });
 
+// --- VULNERABILITIES（OSV.dev × CISA KEV の照合結果） ---
+const PRIORITY_RANK = { critical: 4, high: 3, medium: 2, low: 1, negligible: 0, unknown: -1 };
+// 修正版のない脆弱性が数百件になりうるため、描画は上限で打ち切る（ソートは優先度順）
+const VULN_MAX_ROWS = 300;
+let vulnData = null;
+
+function fmtAgo(epoch) {
+  if (!epoch) return "未照合";
+  const sec = Math.max(0, Date.now() / 1000 - epoch);
+  if (sec < 3600) return `${Math.floor(sec / 60)}分前`;
+  if (sec < 86400) return `${Math.floor(sec / 3600)}時間前`;
+  return `${Math.floor(sec / 86400)}日前`;
+}
+
+function cveLink(cve) {
+  if (!/^CVE-\d{4}-\d+$/.test(cve || "")) return escapeHtml(cve || "");
+  return `<a href="https://ubuntu.com/security/${cve}" target="_blank" rel="noopener">${cve}</a>`;
+}
+
+function renderVulnHosts(hosts) {
+  const container = document.getElementById("vulnHosts");
+  const select = document.getElementById("vulnHostFilter");
+  if (!hosts.length) return;
+  container.innerHTML = "";
+  const selected = select.value;
+  select.innerHTML = '<option value="">全ホスト</option>';
+  for (const h of hosts) {
+    const high = (h.by_priority.critical || 0) + (h.by_priority.high || 0);
+    const row = document.createElement("div");
+    row.className = "host-row";
+    row.innerHTML = `
+      <span class="host-name">${escapeHtml(h.host)}</span>
+      <span class="host-version" title="OSVのecosystem">${escapeHtml(h.os.pretty_name || h.ecosystem || "")}</span>
+      <span class="vuln-host-stat kev" title="CISA KEV（悪用確認済み）">KEV <b>${h.kev}</b></span>
+      <span class="vuln-host-stat high" title="Ubuntu優先度 critical+high">HIGH+ <b>${high}</b></span>
+      <span class="vuln-host-stat" title="修正版が提供済み（apt upgradeで解消できる）">修正版あり <b>${h.fixable}</b></span>
+      <span class="vuln-host-stat">全 <b>${h.total}</b> / ${h.package_count} pkgs</span>
+      ${(h.bulk || []).map((b) => `<span class="vuln-host-stat" title="${escapeHtml(`${b.package} ${b.version}: CVE数が多いため件数のみ集計（KEV入り${b.kev}件は一覧に表示）。カーネルの場合の対処は更新+再起動`)}">${escapeHtml(b.package)} <b>${b.count}</b></span>`).join("")}
+      <span class="vuln-host-stat" title="最終照合">${fmtAgo(h.scanned_at)}</span>
+    `;
+    container.appendChild(row);
+    const opt = document.createElement("option");
+    opt.value = h.host;
+    opt.textContent = h.host;
+    select.appendChild(opt);
+  }
+  select.value = selected;
+}
+
+function renderVulnTable() {
+  if (!vulnData) return;
+  const host = document.getElementById("vulnHostFilter").value;
+  const minPrio = document.getElementById("vulnPriorityFilter").value;
+  const kevOnly = document.getElementById("vulnKevOnly").checked;
+  const fixableOnly = document.getElementById("vulnFixableOnly").checked;
+  const rows = vulnData.findings.filter((f) =>
+    (!host || f.host === host) &&
+    // KEV入りは優先度フィルタに関わらず常に表示する（Ubuntu優先度が低めでも悪用は起きている）
+    (f.in_kev || !minPrio || (PRIORITY_RANK[f.priority] ?? -1) >= PRIORITY_RANK[minPrio]) &&
+    (!kevOnly || f.in_kev) &&
+    (!fixableOnly || f.fixed_version)
+  );
+  document.getElementById("vulnCount").textContent =
+    `${rows.length}件` + (rows.length > VULN_MAX_ROWS ? `（先頭${VULN_MAX_ROWS}件を表示）` : "");
+  const tbody = document.getElementById("vulnTbody");
+  tbody.innerHTML = rows.slice(0, VULN_MAX_ROWS).map((f) => {
+    const kev = f.in_kev
+      ? `<span class="vuln-kev" title="${escapeHtml(`KEV追加 ${f.kev_date_added || ""} / ${f.kev_name || ""}`)}">KEV</span>`
+      : "";
+    const pro = f.availability && /Pro/i.test(f.availability) ? " (Ubuntu Pro)" : "";
+    const fixed = f.fixed_version
+      ? escapeHtml(f.fixed_version + pro)
+      : '<span class="vuln-nofix">未提供</span>';
+    return `<tr>
+      <td>${escapeHtml(f.host)}</td>
+      <td>${cveLink(f.cve)}${kev}</td>
+      <td class="prio-${escapeHtml(f.priority)}">${escapeHtml(f.priority)}</td>
+      <td>${escapeHtml(f.package)}</td>
+      <td>${escapeHtml(f.installed_version || "")}</td>
+      <td>${fixed}</td>
+      <td class="vuln-summary" title="${escapeHtml(f.summary || "")}">${escapeHtml(f.summary || "")}</td>
+    </tr>`;
+  }).join("");
+}
+
+async function loadVulns() {
+  try {
+    const res = await fetch("/api/vulns");
+    vulnData = await res.json();
+    document.getElementById("vulnKevInfo").textContent = vulnData.kev_last_sync
+      ? `KEV ${vulnData.kev_count}件 / 同期 ${fmtAgo(vulnData.kev_last_sync)}`
+      : "KEV 未同期";
+    renderVulnHosts(vulnData.hosts);
+    renderVulnTable();
+  } catch (err) {
+    console.error("脆弱性情報の取得に失敗", err);
+  }
+}
+
+for (const id of ["vulnHostFilter", "vulnPriorityFilter", "vulnKevOnly", "vulnFixableOnly"]) {
+  document.getElementById(id).addEventListener("change", renderVulnTable);
+}
+
+document.getElementById("vulnRescanBtn").addEventListener("click", async () => {
+  const btn = document.getElementById("vulnRescanBtn");
+  btn.textContent = "照合中…";
+  try {
+    await fetch("/api/vulns/rescan", { method: "POST" });
+    // 照合はバックグラウンドで数十秒〜数分かかるため、少し待ってから再取得する
+    setTimeout(loadVulns, 15000);
+  } finally {
+    setTimeout(() => { btn.textContent = "再照合"; }, 15000);
+  }
+});
+
 initStatCardFilters();
 initFeedCollapse();
 loadInitialAlerts();
@@ -1060,3 +1175,6 @@ connectWs();
 loadStats();
 loadSuppressions();
 setInterval(loadStats, 3000);
+loadVulns();
+// 照合結果は数百〜数千件になりうる一方、更新は1日数回程度なので低頻度で十分
+setInterval(loadVulns, 300000);

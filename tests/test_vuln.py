@@ -1,0 +1,213 @@
+"""パッケージ収集(app/package_watch.py)と脆弱性照合(webui/vuln.py)のテスト。
+OSV/KEVへの通信はモックし、ネットワーク無しで照合・差分アラートの挙動を確認する。"""
+import sqlite3
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+from unittest.mock import patch
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "app"))
+sys.path.insert(0, str(ROOT / "webui"))
+import package_watch  # noqa: E402
+import vuln  # noqa: E402
+
+DPKG_STATUS = """Package: libssl3t64
+Status: install ok installed
+Architecture: amd64
+Source: openssl (3.0.13-0ubuntu3)
+Version: 3.0.13-0ubuntu3
+Description: Secure Sockets Layer toolkit
+ continuation line: should be ignored
+
+Package: openssl
+Status: install ok installed
+Version: 3.0.13-0ubuntu3
+
+Package: sudo
+Status: install ok installed
+Version: 1.9.15p5-3ubuntu5
+
+Package: old-removed
+Status: deinstall ok config-files
+Version: 1.0
+"""
+
+
+class PackageWatchParseTests(unittest.TestCase):
+    def test_groups_binaries_by_source_and_skips_removed(self):
+        pkgs = package_watch.parse_dpkg_status(DPKG_STATUS)
+        self.assertEqual(
+            pkgs,
+            [
+                {"name": "openssl", "version": "3.0.13-0ubuntu3", "binaries": ["libssl3t64", "openssl"]},
+                {"name": "sudo", "version": "1.9.15p5-3ubuntu5", "binaries": ["sudo"]},
+            ],
+        )
+
+    def test_osv_ecosystem(self):
+        lts = package_watch.parse_os_release('ID=ubuntu\nVERSION_ID="24.04"\nVERSION="24.04.3 LTS (Noble Numbat)"\n')
+        self.assertEqual(package_watch.osv_ecosystem(lts), "Ubuntu:24.04:LTS")
+        interim = {"ID": "ubuntu", "VERSION_ID": "25.04", "VERSION": "25.04 (Plucky Puffin)"}
+        self.assertEqual(package_watch.osv_ecosystem(interim), "Ubuntu:25.04")
+        self.assertEqual(package_watch.osv_ecosystem({"ID": "debian", "VERSION_ID": "12"}), "Debian:12")
+        self.assertIsNone(package_watch.osv_ecosystem({"ID": "fedora", "VERSION_ID": "40"}))
+
+
+ECO = "Ubuntu:24.04:LTS"
+
+
+def osv_doc(vid, pkg, fixed, priority):
+    return {
+        "id": vid,
+        "modified": "2026-01-01T00:00:00Z",
+        "upstream": [vid.replace("UBUNTU-", "")],
+        "details": f"{vid} details",
+        "severity": [{"type": "Ubuntu", "score": priority}],
+        "affected": [{
+            "package": {"name": pkg, "ecosystem": ECO},
+            "ranges": [{"type": "ECOSYSTEM", "events": [{"introduced": "0"}] + ([{"fixed": fixed}] if fixed else [])}],
+            "ecosystem_specific": {"availability": "No subscription required"},
+        }],
+    }
+
+
+DOCS = {
+    "UBUNTU-CVE-2025-32463": osv_doc("UBUNTU-CVE-2025-32463", "sudo", "1.9.15p5-3ubuntu5.24.04.1", "high"),
+    "UBUNTU-CVE-2024-0001": osv_doc("UBUNTU-CVE-2024-0001", "openssl", "3.0.13-0ubuntu3.1", "high"),
+    "UBUNTU-CVE-2024-0002": osv_doc("UBUNTU-CVE-2024-0002", "openssl", None, "low"),
+}
+
+
+class FakeOsv:
+    """querybatch / vulns / KEV を差し替えるモック。matchesを書き換えて状況を変える。"""
+
+    def __init__(self):
+        self.matches = {
+            ("sudo", "1.9.15p5-3ubuntu5"): ["UBUNTU-CVE-2025-32463", "USN-7604-1"],
+            ("openssl", "3.0.13-0ubuntu3"): ["UBUNTU-CVE-2024-0001", "UBUNTU-CVE-2024-0002"],
+        }
+        self.kev = ["CVE-2025-32463"]
+        self.detail_calls = []
+
+    def __call__(self, url, payload=None, timeout=60):
+        if url == vuln.KEV_URL:
+            return {"catalogVersion": "test", "vulnerabilities": [{"cveID": c} for c in self.kev]}
+        if url == vuln.OSV_QUERYBATCH_URL:
+            results = []
+            for q in payload["queries"]:
+                ids = self.matches.get((q["package"]["name"], q["version"]), [])
+                results.append({"vulns": [{"id": i, "modified": "2026-01-01T00:00:00Z"} for i in ids]})
+            return {"results": results}
+        vid = url.rsplit("/", 1)[1]
+        self.detail_calls.append(vid)
+        return DOCS[vid]
+
+
+class VulnScannerTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.db = str(Path(self.tmp.name) / "t.db")
+        self.settings = {}
+        self.alerts = []
+
+        def connect():
+            conn = sqlite3.connect(self.db)
+            conn.row_factory = sqlite3.Row
+            return conn
+
+        self.scanner = vuln.VulnScanner(
+            connect,
+            lambda cat, msg, sev, host: self.alerts.append((sev, msg)),
+            lambda k: self.settings.get(k, ""),
+            lambda k, v: self.settings.__setitem__(k, v),
+        )
+        self.osv = FakeOsv()
+        patcher = patch.object(vuln, "_http_json", self.osv)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.addCleanup(self.tmp.cleanup)
+
+    def send(self, packages, inv_hash):
+        changed = self.scanner.store_inventory(
+            {"host": "h-1", "ecosystem": ECO, "os": {}, "packages": packages, "inventory_hash": inv_hash}
+        )
+        self.scanner.run_due()
+        return changed
+
+    def test_first_scan_summarizes_and_flags_kev(self):
+        self.send(
+            [{"name": "sudo", "version": "1.9.15p5-3ubuntu5"}, {"name": "openssl", "version": "3.0.13-0ubuntu3"}],
+            "a",
+        )
+        summary = self.scanner.summary()
+        # USN-*はUBUNTU-CVE-*と重複するため除外され、3件になる
+        self.assertEqual(summary["hosts"][0]["total"], 3)
+        self.assertEqual(summary["hosts"][0]["kev"], 1)
+        top = summary["findings"][0]
+        self.assertEqual((top["cve"], top["in_kev"], top["fixed_version"]),
+                         ("CVE-2025-32463", 1, "1.9.15p5-3ubuntu5.24.04.1"))
+        # 初回はサマリー(warning) + KEVまとめ(critical)の2件だけ
+        self.assertEqual([s for s, _ in self.alerts], ["warning", "critical"])
+
+    def test_upgrade_resolves_and_new_high_alerts(self):
+        self.send([{"name": "sudo", "version": "1.9.15p5-3ubuntu5"}], "a")
+        self.alerts.clear()
+        # sudoを修正版に上げ、同時にopensslが新規導入された
+        self.osv.matches[("sudo", "1.9.15p5-3ubuntu5.24.04.1")] = []
+        changed = self.send(
+            [{"name": "sudo", "version": "1.9.15p5-3ubuntu5.24.04.1"}, {"name": "openssl", "version": "3.0.13-0ubuntu3"}],
+            "b",
+        )
+        self.assertTrue(changed)
+        sev_msgs = sorted(self.alerts)
+        # high+修正版ありのopenssl CVEだけwarning、lowの未修正は通知しない、sudoの解消はinfo
+        self.assertEqual([s for s, _ in sev_msgs], ["info", "warning"])
+        self.assertIn("CVE-2024-0001", sev_msgs[1][1])
+
+    def test_kev_addition_later_raises_critical(self):
+        self.osv.kev = []
+        self.send([{"name": "openssl", "version": "3.0.13-0ubuntu3"}], "a")
+        self.alerts.clear()
+        self.osv.kev = ["CVE-2024-0002"]
+        self.scanner.run_due(force=True)
+        self.assertEqual(len(self.alerts), 1)
+        self.assertEqual(self.alerts[0][0], "critical")
+        self.assertIn("CVE-2024-0002", self.alerts[0][1])
+
+    def test_details_are_cached(self):
+        self.send([{"name": "openssl", "version": "3.0.13-0ubuntu3"}], "a")
+        first = len(self.osv.detail_calls)
+        self.scanner.run_due(force=True)
+        self.assertEqual(len(self.osv.detail_calls), first)
+
+    def test_bulk_package_only_fetches_kev_details(self):
+        many = [f"UBUNTU-CVE-2024-{1000 + i}" for i in range(vuln.BULK_THRESHOLD + 5)]
+        self.osv.matches[("linux", "6.8.0-31.31")] = many
+        kev_id = many[3]
+        DOCS[kev_id] = osv_doc(kev_id, "linux", "6.8.0-44.44", "high")
+        self.addCleanup(DOCS.pop, kev_id)
+        self.osv.kev = [kev_id.replace("UBUNTU-", "")]
+        self.send([{"name": "linux", "version": "6.8.0-31.31"}], "a")
+        self.assertEqual(self.osv.detail_calls, [kev_id])
+        host = self.scanner.summary()["hosts"][0]
+        self.assertEqual(host["bulk"][0]["count"], len(many))
+        self.assertEqual(host["kev"], 1)
+
+    def test_inventory_arriving_during_scan_is_not_dropped(self):
+        # 照合中(ロック保持中)に届いた依頼は、実行中の側が拾って処理する
+        self.scanner.lock.acquire()
+        self.scanner.store_inventory(
+            {"host": "h-1", "ecosystem": ECO, "packages": [{"name": "sudo", "version": "1.9.15p5-3ubuntu5"}],
+             "inventory_hash": "a"}
+        )
+        self.scanner.run_due()  # ロック取得できず即return
+        self.assertIsNone(self.scanner.summary()["hosts"][0]["scanned_at"])
+        self.scanner.lock.release()
+        self.scanner.run_due()
+        self.assertIsNotNone(self.scanner.summary()["hosts"][0]["scanned_at"])
+
+
+if __name__ == "__main__":
+    unittest.main()

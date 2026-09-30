@@ -92,6 +92,7 @@ hit-linux-ids/
 │   ├── integrity.py                      # ファイル整合性監視（簡易AIDE）
 │   ├── procnet_watch.py                   # プロセス・ネットワーク異常検知
 │   ├── outbound_watch.py                   # 外向き通信の異常検知
+│   ├── package_watch.py                    # 脆弱性照合用のパッケージ一覧(dpkg)収集
 │   ├── notify.py                            # アラート発火の中枢（AIトリアージ呼び出し→
 │   │                                          マネージャー送信→ローカルログ→Webhook）
 │   ├── ai_triage.py                          # Cloudflare AI Gatewayへの問い合わせ・応答パース
@@ -177,6 +178,20 @@ hit-linux-ids/
    - IPはアクセスログに記録された値を使用し、未検証のX-Forwarded-Forは参照しない
    - 初回はファイル末尾から開始。inodeとオフセットを保存して再起動・ログローテーションに対応
    - WebアラートはAIコメントの対象になるが、AIによる自動静音化は行わない
+7. **脆弱性照合**（エージェント: `app/package_watch.py` / マネージャー: `webui/vuln.py`）
+   - エージェントは`/var/lib/dpkg/status`からインストール済みパッケージを**ソース
+     パッケージ単位**で集め、中央WebUIへ送るだけ（外部の脆弱性DBには接続しない）。
+     構成が変わったとき（apt upgrade後等）と24時間ごとに送信。現状Ubuntu/Debianのみ
+   - マネージャーが**OSV.dev**（ディストリ別脆弱性DB、バックポートを考慮した判定）と
+     **CISA KEV**（悪用確認済みCVE一覧、日次ダウンロード）に照合する。
+     外部に送るのはパッケージ名とバージョンだけ
+   - 通知は差分のみ（カテゴリ`vuln_watch`）:
+     - 初回照合: サマリー1件(WARNING)＋KEVまとめ1件(CRITICAL)
+     - 以降: KEV入りの新規脆弱性、または既存脆弱性のKEV追加 → CRITICAL
+     - Ubuntu優先度high以上かつ修正版ありの新規脆弱性 → WARNING
+     - パッケージ更新で解消 → INFO
+   - カーネル（1ソースで数千CVEに該当）は件数のみ集計し、KEV入りだけ個別表示
+   - ダッシュボードの「VULNERABILITIES」パネルでホスト別件数と一覧を表示
 
 ### Webアクセスログの有効化
 
@@ -474,6 +489,9 @@ OFFにしていても、デイリーレポートだけ独立してONにできる
 | `GET /api/central-config` | エージェント配布ページ用。共有Ingestトークンの取得 |
 | `GET/POST /api/daily-report-settings` | デイリーレポートの有効/無効・送信時刻(JST)の取得・保存 |
 | `POST /api/daily-report-settings/test` | デイリーレポートの即時テスト送信 |
+| `POST /api/ingest/packages` | エージェントからのパッケージ一覧受信。構成変化時は即時に再照合 |
+| `GET /api/vulns?host=` | 脆弱性照合結果（ホスト別サマリー＋一覧、KEV→優先度順） |
+| `POST /api/vulns/rescan` | KEV再ダウンロードを含む全ホストの強制再照合 |
 | `WS /ws/alerts` | `alerts.jsonl`の追記をtailしてリアルタイム配信 |
 
 ### データ永続化の設計（2層構成）
@@ -740,6 +758,8 @@ curl -sf http://localhost:8877/api/stats  # ヘルスチェック
 
 ## 今後の拡張候補
 
+- 脆弱性照合のmacOS対応（OSVはHomebrew非対応のため、別ソースが必要）と、
+  snapパッケージ・稼働中カーネル（`uname -r`）の区別。
 - Windows向けエージェントの実装（現状はLinux/macOSのみ対応）。
 - Dockerコンテナ自体の異常（想定外イメージの起動等）を`docker.sock`経由で
   監視する拡張。

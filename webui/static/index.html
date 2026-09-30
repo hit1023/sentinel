@@ -282,6 +282,38 @@
     </div>
   </section>
 
+  <section class="vuln-row">
+    <div class="panel vuln-panel">
+      <div class="panel-head">
+        <span>VULNERABILITIES（OSV.dev × CISA KEV）</span>
+        <span class="vuln-head-right">
+          <span class="mono-dim" id="vulnKevInfo">KEV: --</span>
+          <span class="mini-btn" id="vulnRescanBtn" title="KEVの再ダウンロードを含め、全ホストを今すぐ再照合する">再照合</span>
+        </span>
+      </div>
+      <div class="hosts-list" id="vulnHosts">
+        <div class="mono-dim">パッケージ一覧の受信待ち…（Ubuntu/Debianのエージェントが自動送信します）</div>
+      </div>
+      <div class="vuln-filters">
+        <select id="vulnHostFilter"><option value="">全ホスト</option></select>
+        <select id="vulnPriorityFilter">
+          <option value="high">優先度 high以上</option>
+          <option value="medium">優先度 medium以上</option>
+          <option value="">すべての優先度</option>
+        </select>
+        <label><input type="checkbox" id="vulnKevOnly"> KEVのみ</label>
+        <label><input type="checkbox" id="vulnFixableOnly" checked> 修正版ありのみ</label>
+        <span class="mono-dim" id="vulnCount"></span>
+      </div>
+      <div class="vuln-table-wrap">
+        <table class="vuln-table">
+          <thead><tr><th>HOST</th><th>CVE</th><th>優先度</th><th>パッケージ</th><th>導入版</th><th>修正版</th><th>概要</th></tr></thead>
+          <tbody id="vulnTbody"></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
   <section class="mid-grid" style="margin-bottom:18px;">
     <div class="panel heatmap-panel">
       <div class="panel-head"><span>24H ACTIVITY HEATMAP（1時間単位・ホスト別）</span></div>

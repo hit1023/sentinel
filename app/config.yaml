@@ -119,6 +119,14 @@ integrity_watch:
 # --- 外向き通信の異常検知 ---
 # LAN内(プライベートIP)への通信は監視対象外。それ以外の宛先への確立済み通信のうち、
 # 既知ポート以外・既知の攻撃ツールが使うポートへの通信を検知する。
+# 脆弱性照合用のパッケージ収集。インストール済みパッケージ(dpkg)の一覧を中央WebUIへ送り、
+# 照合（OSV.dev + CISA KEV）はマネージャー側で行う。エージェントは外部DBに接続しない。
+# 現状Ubuntu/Debianのみ対応（dpkgの無いホストでは何もしない）。
+package_watch:
+  enabled: true
+  # パッケージ構成に変化が無くても、この間隔で一覧を再送する（マネージャーの表示鮮度用）
+  resend_hours: 24
+
 outbound_watch:
   enabled: true
   # このポートへの外向き通信は正常とみなし、通知しない（Web/DNS/NTP/SSH/DoH等）
