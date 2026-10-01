@@ -792,8 +792,12 @@ def remediation(f: dict, binaries: list[str], kernel_release: str | None,
             steps += [
                 {"text": f"{pkg}を修正版({fixed})以降に更新する",
                  "command": f"sudo apt update && sudo apt install --only-upgrade {bins}"},
-                {"text": "更新したライブラリを使っているサービスを再起動する（needrestartが入っていれば自動判定）",
-                 "command": "sudo needrestart -r a"},
+                # needrestartはUbuntu Serverには標準で入るが、デスクトップ版等には無い（h-1で
+                # 「コマンドが見つからない」になった）。無い環境でもそのまま貼って動くよう分岐させる
+                {"text": "更新したライブラリを使っているサービスを再起動する。needrestartがあれば"
+                         "対象サービスを自動で再起動し、無ければ再起動を促す（ホストの再起動が最も確実）",
+                 "command": "if command -v needrestart >/dev/null; then sudo needrestart -r a; "
+                            "else echo 'needrestart未導入: sudo reboot で確実に反映できます'; fi"},
             ]
         return {
             "key": "upgrade_pro" if pro else "upgrade",

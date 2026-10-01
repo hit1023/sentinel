@@ -278,6 +278,8 @@ class RemediationTests(unittest.TestCase):
         r = vuln.remediation(self.finding("openssl", "2", "No subscription required"), ["libssl3t64", "openssl"], None)
         self.assertEqual(r["key"], "upgrade")
         self.assertIn("sudo apt update && sudo apt install --only-upgrade libssl3t64 openssl", [s.get("command") for s in r["steps"]])
+        # needrestartが無い環境でもエラーにならないよう存在確認してから使う
+        self.assertTrue(any((s.get("command") or "").startswith("if command -v needrestart") for s in r["steps"]))
 
     def test_pro_only_fix(self):
         r = vuln.remediation(self.finding("openssl", "2", "Available with Ubuntu Pro"), ["openssl"], None)
