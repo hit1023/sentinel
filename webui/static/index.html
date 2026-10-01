@@ -219,6 +219,16 @@
   </div>
 </div>
 
+<div class="modal-overlay" id="vulnOverlay" style="display:none;">
+  <div class="modal-panel vuln-modal">
+    <div class="modal-head">
+      <span id="vulnModalTitle">対応ガイド</span>
+      <span class="modal-close" id="closeVulnModalBtn">✕</span>
+    </div>
+    <div class="modal-body" id="vulnModalBody"></div>
+  </div>
+</div>
+
 <main class="layout">
 
   <section class="ai-banner" id="aiBanner" style="display:none;">
@@ -307,7 +317,7 @@
       </div>
       <div class="vuln-table-wrap">
         <table class="vuln-table">
-          <thead><tr><th>HOST</th><th>CVE</th><th>優先度</th><th>パッケージ</th><th>導入版</th><th>修正版</th><th>概要</th></tr></thead>
+          <thead><tr><th>HOST</th><th>CVE</th><th>優先度</th><th>対応</th><th>パッケージ</th><th>導入版</th><th>修正版</th><th>概要</th></tr></thead>
           <tbody id="vulnTbody"></tbody>
         </table>
       </div>

@@ -11,6 +11,7 @@
 照合結果はalerts_important.dbに保存し、差分（新規・解消）だけをアラートにする。
 """
 import json
+import re
 import sqlite3
 import threading
 import time
@@ -62,9 +63,7 @@ def init_db(conn: sqlite3.Connection):
         )
         """
     )
-    cols = {r[1] for r in conn.execute("PRAGMA table_info(host_inventory)").fetchall()}
-    if "bulk_json" not in cols:
-        conn.execute("ALTER TABLE host_inventory ADD COLUMN bulk_json TEXT")
+    _add_columns(conn, "host_inventory", ["bulk_json", "kernel_release"])
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS vuln_details (
@@ -109,6 +108,25 @@ def init_db(conn: sqlite3.Connection):
         )
         """
     )
+    # 対応ガイド表示用（KEVの「求められる対応」・参考URL）。後から追加した列
+    _add_columns(conn, "kev", ["short_description", "required_action", "notes"])
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS vuln_ai_advice (
+            key TEXT PRIMARY KEY,
+            text TEXT,
+            created_at REAL
+        )
+        """
+    )
+
+
+def _add_columns(conn: sqlite3.Connection, table: str, columns: list[str]):
+    """既存DBに後から列を足す（CREATE TABLE IF NOT EXISTSは既存テーブルを変更しないため）。"""
+    existing = {r[1] for r in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+    for col in columns:
+        if col not in existing:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} TEXT")
 
 
 def _http_json(url: str, payload: dict | None = None, timeout: int = 60):
@@ -147,12 +165,13 @@ class VulnScanner:
             row = conn.execute("SELECT scanned_hash FROM host_inventory WHERE host=?", (host,)).fetchone()
             conn.execute(
                 """
-                INSERT INTO host_inventory (host, ecosystem, os_json, packages_json, inventory_hash, received_at)
-                VALUES (?, ?, ?, ?, ?, ?)
+                INSERT INTO host_inventory
+                    (host, ecosystem, os_json, packages_json, inventory_hash, received_at, kernel_release)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(host) DO UPDATE SET
                     ecosystem=excluded.ecosystem, os_json=excluded.os_json,
                     packages_json=excluded.packages_json, inventory_hash=excluded.inventory_hash,
-                    received_at=excluded.received_at
+                    received_at=excluded.received_at, kernel_release=excluded.kernel_release
                 """,
                 (
                     host,
@@ -161,6 +180,7 @@ class VulnScanner:
                     json.dumps(payload.get("packages") or [], ensure_ascii=False),
                     inv_hash,
                     time.time(),
+                    payload.get("kernel_release"),
                 ),
             )
         return row is None or row["scanned_hash"] != inv_hash
@@ -179,13 +199,23 @@ class VulnScanner:
                 v.get("dateAdded"),
                 v.get("dueDate"),
                 v.get("knownRansomwareCampaignUse"),
+                v.get("shortDescription"),
+                v.get("requiredAction"),
+                v.get("notes"),
             )
             for v in data.get("vulnerabilities", [])
             if v.get("cveID")
         ]
         with self.connect() as conn:
             conn.execute("DELETE FROM kev")
-            conn.executemany("INSERT OR REPLACE INTO kev VALUES (?, ?, ?, ?, ?)", rows)
+            conn.executemany(
+                """
+                INSERT OR REPLACE INTO kev
+                    (cve, name, date_added, due_date, ransomware, short_description, required_action, notes)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                rows,
+            )
         self.set_setting("kev_last_sync", str(time.time()))
         self.set_setting("kev_catalog_version", data.get("catalogVersion") or "")
         return len(rows)
@@ -364,13 +394,21 @@ class VulnScanner:
                 (inv["inventory_hash"], now, json.dumps(bulk, ensure_ascii=False), host),
             )
 
-        self._alert_diff(host, previous, current, is_first_scan, bulk)
+        # ヘッダだけ入っているカーネルソース(linux-libc-dev等)は攻撃面にならないため、
+        # 一覧には出すがKEVのCRITICAL通知からは外す
+        bin_index = _binaries_index(packages)
+        quiet = {
+            key for key, f in current.items()
+            if _is_kernel_headers_only(f["package"], bin_index.get((f["package"], f["installed_version"]), []))
+        }
+        self._alert_diff(host, previous, current, is_first_scan, bulk, quiet)
 
-    def _alert_diff(self, host: str, previous: dict, current: dict, is_first_scan: bool, bulk: list[dict]):
+    def _alert_diff(self, host: str, previous: dict, current: dict, is_first_scan: bool, bulk: list[dict],
+                    quiet: set | None = None):
         # KEV入り: 新規の脆弱性、または既存の脆弱性がKEVに追加された（=悪用が始まった）場合
         kev_new = [
             f for key, f in current.items()
-            if f["in_kev"] and not (previous.get(key) or {}).get("in_kev")
+            if f["in_kev"] and not (previous.get(key) or {}).get("in_kev") and key not in (quiet or set())
         ]
         # 優先度high以上で修正版が出ているもの（apt upgradeで直せる＝対応すべきもの）
         high_new = [
@@ -454,8 +492,8 @@ class VulnScanner:
     def summary(self, host: str | None = None) -> dict:
         with self.connect() as conn:
             inv_rows = conn.execute(
-                "SELECT host, ecosystem, os_json, received_at, scanned_at, packages_json, bulk_json"
-                " FROM host_inventory"
+                "SELECT host, ecosystem, os_json, received_at, scanned_at, packages_json, bulk_json,"
+                " kernel_release FROM host_inventory"
             ).fetchall()
             params: tuple = ()
             where = ""
@@ -496,7 +534,18 @@ class VulnScanner:
                 "bulk": json.loads(r["bulk_json"] or "[]"),
             })
 
+        binaries = {
+            r["host"]: _binaries_index(json.loads(r["packages_json"] or "[]")) for r in inv_rows
+        }
+        kernels = {r["host"]: r["kernel_release"] for r in inv_rows}
         for f in findings:
+            action = remediation(
+                f,
+                binaries.get(f["host"], {}).get((f["package"], f["installed_version"]), []),
+                kernels.get(f["host"]),
+            )
+            f["action_key"] = action["key"]
+            f["action_label"] = action["label"]
             f["summary"] = (details.get(f["vuln_id"]) or "")[:300]
             k = kev_info.get(f["cve"])
             if k:
@@ -517,6 +566,200 @@ class VulnScanner:
             "kev_last_sync": float(self.get_setting("kev_last_sync") or 0) or None,
             "kev_count": len(kev_info),
         }
+
+    def detail(self, host: str, vuln_id: str, package: str) -> dict | None:
+        """対応ガイド用の1件分の詳細（このホストでの状況・推奨手順・KEV情報・参考リンク）。"""
+        with self.connect() as conn:
+            f = conn.execute(
+                "SELECT * FROM host_findings WHERE host=? AND vuln_id=? AND package=?",
+                (host, vuln_id, package),
+            ).fetchone()
+            if not f:
+                return None
+            f = dict(f)
+            inv = dict(conn.execute("SELECT * FROM host_inventory WHERE host=?", (host,)).fetchone())
+            d = conn.execute("SELECT * FROM vuln_details WHERE id=?", (vuln_id,)).fetchone()
+            k = conn.execute("SELECT * FROM kev WHERE cve=?", (f["cve"],)).fetchone()
+            advice = conn.execute(
+                "SELECT text, created_at FROM vuln_ai_advice WHERE key=?", (_advice_key(f),)
+            ).fetchone()
+        binaries = _binaries_index(json.loads(inv["packages_json"] or "[]")).get(
+            (f["package"], f["installed_version"]), []
+        )
+        f["binaries"] = binaries
+        f["kernel_release"] = inv.get("kernel_release")
+        f["is_kernel"] = _is_kernel(f["package"], binaries)
+        f["os"] = json.loads(inv["os_json"] or "{}")
+        if d:
+            f["description"] = d["summary"]
+            f["cvss"] = d["cvss"]
+            f["published"] = d["published"]
+        f["kev"] = dict(k) if k else None
+        f["remediation"] = remediation(f, binaries, inv.get("kernel_release"))
+        cve = f["cve"] or ""
+        f["links"] = [
+            {"label": "Ubuntu CVE", "url": f"https://ubuntu.com/security/{cve}"},
+            {"label": "NVD", "url": f"https://nvd.nist.gov/vuln/detail/{cve}"},
+            {"label": "OSV", "url": f"https://osv.dev/vulnerability/{vuln_id}"},
+        ]
+        if k:
+            f["links"].append({
+                "label": "CISA KEV",
+                "url": f"https://www.cisa.gov/known-exploited-vulnerabilities-catalog?search_api_fulltext={cve}",
+            })
+        f["ai_advice"] = dict(advice) if advice else None
+        return f
+
+    def get_ai_advice(self, finding: dict) -> str | None:
+        with self.connect() as conn:
+            row = conn.execute(
+                "SELECT text FROM vuln_ai_advice WHERE key=?", (_advice_key(finding),)
+            ).fetchone()
+        return row["text"] if row else None
+
+    def save_ai_advice(self, finding: dict, text: str):
+        with self.connect() as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO vuln_ai_advice VALUES (?, ?, ?)",
+                (_advice_key(finding), text, time.time()),
+            )
+
+
+def _advice_key(f: dict) -> str:
+    # 同じCVEでも、導入版・修正版の状況が変われば推奨内容が変わるので版まで含める
+    return "|".join([f["host"], f["vuln_id"], f["package"], f.get("installed_version") or "",
+                     f.get("fixed_version") or ""])
+
+
+def _binaries_index(packages: list[dict]) -> dict[tuple[str, str], list[str]]:
+    return {(p["name"], p["version"]): p.get("binaries") or [] for p in packages}
+
+
+def _is_kernel(package: str, binaries: list[str]) -> bool:
+    return (package == "linux" or package.startswith("linux-")) and any(
+        b.startswith(("linux-image-", "linux-modules-")) for b in binaries
+    )
+
+
+def _is_kernel_headers_only(package: str, binaries: list[str]) -> bool:
+    """カーネルのソースから作られるが、起動するカーネル本体ではないもの（linux-libc-dev等の
+    ビルド用ヘッダ・ツール）だけが入っている場合。HWEカーネル運用のホストでは、
+    GAカーネル(linux)のソースからlinux-libc-devだけが入っているのが普通。"""
+    return (
+        (package == "linux" or package.startswith("linux-"))
+        and bool(binaries)
+        and not _is_kernel(package, binaries)
+        and all(b.startswith(("linux-libc-dev", "linux-headers-", "linux-tools-", "linux-hwe-",
+                              "linux-cloud-tools-", "linux-source")) for b in binaries)
+    )
+
+
+def remediation(f: dict, binaries: list[str], kernel_release: str | None) -> dict:
+    """照合結果1件に対する「このホストで何をすればいいか」を、修正版の有無・
+    Ubuntu Proの要否・カーネルかどうか・稼働中かどうかから決める（AIに頼らない確定的なガイド）。
+    key: UIの色分け用 / label: 一覧の短い表示 / steps: [{text, command?}] / notes: 補足"""
+    pkg = f["package"]
+    fixed = f.get("fixed_version")
+    pro = bool(fixed and re.search(r"Pro", f.get("availability") or ""))
+    bins = " ".join(binaries) or pkg
+    kernel = _is_kernel(pkg, binaries)
+    running = None
+    if kernel and kernel_release:
+        running = any(kernel_release in b for b in binaries)
+    notes = []
+    if f.get("in_kev"):
+        notes.append("CISA KEV掲載＝実際の攻撃での悪用が確認済み。他の脆弱性より優先して対応する")
+
+    if _is_kernel_headers_only(pkg, binaries):
+        return {
+            "key": "none",
+            "label": "ヘッダのみ：実害なし",
+            "steps": [
+                {"text": f"入っているのは{bins}だけで、これはプログラムのビルドに使うヘッダ等であり、"
+                         "起動しているカーネル本体ではない。この脆弱性はカーネル内部の処理の問題なので、"
+                         "ヘッダが入っているだけでは攻撃できない"},
+                {"text": "稼働中のカーネルを確認する（カーネル本体の脆弱性は別の行に出る）", "command": "uname -r"},
+                {"text": "修正版が出れば通常の更新で入る。特別な対応は不要",
+                 "command": "sudo apt update && sudo apt upgrade"},
+            ],
+            "notes": ["linux-libc-devはbuild-essential等が依存しているため、削除はしないこと"],
+        }
+
+    if kernel and running is False:
+        return {
+            "key": "remove",
+            "label": "未使用カーネル：削除で解消",
+            "steps": [
+                {"text": f"このカーネル({f['installed_version']})はインストールされているだけで、"
+                         f"稼働中のカーネル({kernel_release})ではない。稼働中の版を確認する",
+                 "command": "uname -r"},
+                {"text": "古いカーネルを自動削除する（稼働中のカーネルは削除されない）",
+                 "command": "sudo apt autoremove --purge"},
+                {"text": "まだ残っている場合は個別に削除する（稼働中の版が含まれていないことを必ず確認）",
+                 "command": f"sudo apt remove --purge {bins}"},
+            ],
+            "notes": notes + ["削除後、次回の照合（パッケージ一覧の送信時）で自動的に解消扱いになる"],
+        }
+
+    if fixed:
+        steps = []
+        if pro:
+            steps.append({
+                "text": "修正版はUbuntu Pro（ESM）でのみ提供されている。Proを有効化する"
+                        "（個人利用は5台まで無料。トークンは https://ubuntu.com/pro で取得）",
+                "command": "sudo pro attach <トークン>",
+            })
+        if kernel:
+            steps += [
+                {"text": f"カーネルを修正版({fixed})以降に更新する", "command": "sudo apt update && sudo apt full-upgrade"},
+                {"text": "再起動して新しいカーネルで起動する", "command": "sudo reboot"},
+                {"text": "再起動後、稼働中のカーネルが更新されたことを確認する", "command": "uname -r"},
+            ]
+        else:
+            steps += [
+                {"text": f"{pkg}を修正版({fixed})以降に更新する",
+                 "command": f"sudo apt update && sudo apt install --only-upgrade {bins}"},
+                {"text": "更新したライブラリを使っているサービスを再起動する（needrestartが入っていれば自動判定）",
+                 "command": "sudo needrestart -r a"},
+            ]
+        return {
+            "key": "upgrade_pro" if pro else "upgrade",
+            "label": ("Ubuntu Proで更新" if pro else ("カーネル更新+再起動" if kernel else "aptで更新")),
+            "steps": steps,
+            "notes": notes + ["更新後、次回の照合で自動的に解消扱いになる"],
+        }
+
+    if kernel:
+        return {
+            "key": "wait",
+            "label": "修正待ち（稼働中カーネル）",
+            "steps": [
+                {"text": "Ubuntuからまだ修正版が出ていない。カーネル更新は出たらすぐ当てられるよう、"
+                         "通常の更新は適用しておく", "command": "sudo apt update && sudo apt full-upgrade"},
+                {"text": "Ubuntu Pro利用時はLivepatchで再起動なしに修正を受け取れる",
+                 "command": "sudo pro enable livepatch"},
+                {"text": "脆弱な機能（モジュール）を使っていなければ無効化で緩和できる場合がある。"
+                         "下のKEV/Ubuntuのリンクで影響範囲を確認する"},
+            ],
+            "notes": notes + ["SENTINELは毎日再照合し、修正版が出た時点で表示が「カーネル更新+再起動」に変わる"],
+        }
+
+    return {
+        "key": "wait",
+        "label": "修正待ち：不要なら削除",
+        "steps": [
+            {"text": f"Ubuntuからまだ修正版が出ていない。まず{pkg}が本当に必要か確認する"
+                     "（他のパッケージから依存されているか）",
+             "command": f"apt-cache rdepends --installed {bins}"},
+            {"text": "自分で入れたものか、依存で入ったものかを確認する",
+             "command": "apt-mark showmanual | grep -xF " + " ".join(f"-e {b}" for b in (binaries or [pkg]))},
+            {"text": "不要なら削除する（削除すれば次回の照合で解消扱いになる）",
+             "command": f"sudo apt remove {bins} && sudo apt autoremove"},
+            {"text": "必要な場合は、修正版が出るまで外部からの入力を受けない構成か確認し、"
+                     "下のKEV/Ubuntuのリンクで緩和策を確認する"},
+        ],
+        "notes": notes + ["SENTINELは毎日再照合し、修正版が出た時点で表示が「aptで更新」に変わる"],
+    }
 
 
 def _cve_from_id(vid: str) -> str | None:

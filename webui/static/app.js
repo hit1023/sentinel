@@ -1067,11 +1067,6 @@ function fmtAgo(epoch) {
   return `${Math.floor(sec / 86400)}日前`;
 }
 
-function cveLink(cve) {
-  if (!/^CVE-\d{4}-\d+$/.test(cve || "")) return escapeHtml(cve || "");
-  return `<a href="https://ubuntu.com/security/${cve}" target="_blank" rel="noopener">${cve}</a>`;
-}
-
 function renderVulnHosts(hosts) {
   const container = document.getElementById("vulnHosts");
   const select = document.getElementById("vulnHostFilter");
@@ -1126,10 +1121,11 @@ function renderVulnTable() {
     const fixed = f.fixed_version
       ? escapeHtml(f.fixed_version + pro)
       : '<span class="vuln-nofix">未提供</span>';
-    return `<tr>
+    return `<tr data-host="${escapeHtml(f.host)}" data-vuln="${escapeHtml(f.vuln_id)}" data-pkg="${escapeHtml(f.package)}" title="クリックで対応ガイドを表示">
       <td>${escapeHtml(f.host)}</td>
-      <td>${cveLink(f.cve)}${kev}</td>
+      <td>${escapeHtml(f.cve || "")}${kev}</td>
       <td class="prio-${escapeHtml(f.priority)}">${escapeHtml(f.priority)}</td>
+      <td><span class="action-chip action-${escapeHtml(f.action_key || "wait")}">${escapeHtml(f.action_label || "")}</span></td>
       <td>${escapeHtml(f.package)}</td>
       <td>${escapeHtml(f.installed_version || "")}</td>
       <td>${fixed}</td>
@@ -1166,6 +1162,147 @@ document.getElementById("vulnRescanBtn").addEventListener("click", async () => {
   } finally {
     setTimeout(() => { btn.textContent = "再照合"; }, 15000);
   }
+});
+
+// --- 対応ガイド（一覧の行クリックで表示） ---
+function cmdBlock(command) {
+  return `<div class="vg-cmd"><code>${escapeHtml(command)}</code><span class="mini-btn vg-copy" data-cmd="${escapeHtml(command)}">コピー</span></div>`;
+}
+
+function kvRow(label, value) {
+  return value ? `<dt>${label}</dt><dd>${value}</dd>` : "";
+}
+
+async function openVulnGuide(host, vulnId, pkg) {
+  const overlay = document.getElementById("vulnOverlay");
+  const body = document.getElementById("vulnModalBody");
+  body.innerHTML = '<div class="mono-dim">読み込み中…</div>';
+  overlay.style.display = "flex";
+  let d;
+  try {
+    const params = new URLSearchParams({ host, vuln_id: vulnId, package: pkg });
+    const res = await fetch(`/api/vulns/detail?${params}`);
+    if (!res.ok) throw new Error(res.status);
+    d = await res.json();
+  } catch (err) {
+    body.innerHTML = '<div class="mono-dim">詳細を取得できませんでした（再照合で解消済みの可能性があります）</div>';
+    return;
+  }
+  const r = d.remediation;
+  document.getElementById("vulnModalTitle").textContent = `対応ガイド — ${d.cve}`;
+  const kernelState = d.is_kernel
+    ? (d.kernel_release ? `稼働中: ${escapeHtml(d.kernel_release)}` : "稼働中のカーネル不明（エージェント更新後に表示）")
+    : "";
+  const k = d.kev;
+  body.innerHTML = `
+    <div class="vg-badges">
+      ${d.in_kev ? '<span class="vuln-kev">KEV</span>' : ""}
+      <span class="prio-${escapeHtml(d.priority)}">優先度 ${escapeHtml(d.priority)}</span>
+      <span class="action-chip action-${escapeHtml(r.key)}">${escapeHtml(r.label)}</span>
+      <span class="mono-dim">${escapeHtml(d.host)} / ${escapeHtml(d.package)}</span>
+    </div>
+
+    <div class="vg-section">
+      <h4>推奨対応（このホスト）</h4>
+      <ol class="vg-steps">
+        ${r.steps.map((s) => `<li>${escapeHtml(s.text)}${s.command ? cmdBlock(s.command) : ""}</li>`).join("")}
+      </ol>
+      ${r.notes.length ? `<ul class="vg-notes">${r.notes.map((n) => `<li>${escapeHtml(n)}</li>`).join("")}</ul>` : ""}
+    </div>
+
+    <div class="vg-section">
+      <h4>このホストでの状況</h4>
+      <dl class="vg-kv">
+        ${kvRow("OS", escapeHtml(d.os.pretty_name || ""))}
+        ${kvRow("ソースパッケージ", escapeHtml(d.package))}
+        ${kvRow("導入済みバイナリ", escapeHtml((d.binaries || []).join(", ")))}
+        ${kvRow("導入版", escapeHtml(d.installed_version || ""))}
+        ${kvRow("修正版", d.fixed_version ? escapeHtml(d.fixed_version) + (d.availability ? ` <span class="mono-dim">(${escapeHtml(d.availability)})</span>` : "") : '<span class="vuln-nofix">未提供</span>')}
+        ${kvRow("カーネル", kernelState)}
+        ${kvRow("初回検知", d.first_seen ? new Date(d.first_seen * 1000).toLocaleString("ja-JP") : "")}
+      </dl>
+    </div>
+
+    ${k ? `
+    <div class="vg-section">
+      <h4>CISA KEV（悪用確認済み）</h4>
+      <dl class="vg-kv">
+        ${kvRow("名称", escapeHtml(k.name || ""))}
+        ${kvRow("KEV追加日", escapeHtml(k.date_added || ""))}
+        ${kvRow("対応期限(米政府)", escapeHtml(k.due_date || ""))}
+        ${kvRow("ランサムウェア", escapeHtml(k.ransomware || ""))}
+        ${kvRow("求められる対応", escapeHtml(k.required_action || ""))}
+      </dl>
+    </div>` : ""}
+
+    <div class="vg-section">
+      <h4>脆弱性の説明（原文）</h4>
+      <div class="vg-text">${escapeHtml(d.description || "")}</div>
+      ${d.cvss ? `<div class="mono-dim" style="margin-top:6px;font-size:11px;">${escapeHtml(d.cvss)}</div>` : ""}
+    </div>
+
+    <div class="vg-section vg-ai" id="vgAi">
+      <h4>AI解説（日本語）</h4>
+      <div class="vg-text" id="vgAiText">${d.ai_advice ? escapeHtml(d.ai_advice.text) : ""}</div>
+      ${d.ai_advice ? "" : (d.ai_available
+        ? '<span class="mini-btn" id="vgAiBtn">AIに解説してもらう</span> <span class="mono-dim" style="font-size:11px;">押したときだけAIを呼び、結果は保存されます</span>'
+        : '<span class="mono-dim" style="font-size:11px;">AI Gatewayが未設定のため利用できません</span>')}
+    </div>
+
+    <div class="vg-section">
+      <h4>参考リンク</h4>
+      <div class="vg-links">
+        ${d.links.map((l) => `<a href="${escapeHtml(l.url)}" target="_blank" rel="noopener">${escapeHtml(l.label)} ↗</a>`).join("")}
+      </div>
+    </div>
+  `;
+
+  document.getElementById("vgAiBtn")?.addEventListener("click", async (ev) => {
+    const btn = ev.currentTarget;
+    btn.textContent = "解説を生成中…";
+    try {
+      const res = await fetch("/api/vulns/ai-advice", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ host, vuln_id: vulnId, package: pkg }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || res.status);
+      document.getElementById("vgAiText").textContent = data.text;
+      btn.remove();
+    } catch (err) {
+      btn.textContent = "失敗しました（再試行）";
+      document.getElementById("vgAiText").textContent = String(err.message || err);
+    }
+  });
+}
+
+document.getElementById("vulnTbody").addEventListener("click", (ev) => {
+  const tr = ev.target.closest("tr[data-vuln]");
+  if (tr) openVulnGuide(tr.dataset.host, tr.dataset.vuln, tr.dataset.pkg);
+});
+
+document.getElementById("vulnModalBody").addEventListener("click", async (ev) => {
+  const btn = ev.target.closest(".vg-copy");
+  if (!btn) return;
+  try {
+    await navigator.clipboard.writeText(btn.dataset.cmd);
+    btn.textContent = "コピー済";
+  } catch {
+    btn.textContent = "コピー不可";
+  }
+  setTimeout(() => { btn.textContent = "コピー"; }, 1500);
+});
+
+function closeVulnGuide() {
+  document.getElementById("vulnOverlay").style.display = "none";
+}
+document.getElementById("closeVulnModalBtn").addEventListener("click", closeVulnGuide);
+document.getElementById("vulnOverlay").addEventListener("click", (ev) => {
+  if (ev.target.id === "vulnOverlay") closeVulnGuide();
+});
+document.addEventListener("keydown", (ev) => {
+  if (ev.key === "Escape") closeVulnGuide();
 });
 
 initStatCardFilters();

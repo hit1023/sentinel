@@ -269,6 +269,11 @@ def _collect_period_stats(start_epoch: float, end_epoch: float) -> dict:
 
 def _generate_ai_daily_summary(stats: dict) -> str | None:
     """未設定・失敗時はNoneを返す（呼び出し側はAI総括なしのレポートにフォールバックする）。"""
+    return _call_cf_ai(DAILY_REPORT_SYSTEM_PROMPT, json.dumps(stats, ensure_ascii=False))
+
+
+def _call_cf_ai(system_prompt: str, user_content: str, timeout: int = 15) -> str | None:
+    """webui単体でCloudflare AI Gateway(Workers AI)を呼ぶ共通処理。未設定・失敗時はNone。"""
     if not (CF_AI_ACCOUNT_ID and CF_AI_GATEWAY_ID and CF_AI_TOKEN):
         return None
     url = (
@@ -277,8 +282,8 @@ def _generate_ai_daily_summary(stats: dict) -> str | None:
     )
     payload = {
         "messages": [
-            {"role": "system", "content": DAILY_REPORT_SYSTEM_PROMPT},
-            {"role": "user", "content": json.dumps(stats, ensure_ascii=False)},
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_content},
         ]
     }
     req = urllib.request.Request(
@@ -296,7 +301,7 @@ def _generate_ai_daily_summary(stats: dict) -> str | None:
         },
     )
     try:
-        with urllib.request.urlopen(req, timeout=15) as resp:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
             body = json.loads(resp.read().decode("utf-8"))
         return (body["result"]["response"] or "").strip() or None
     except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, OSError, KeyError, TypeError):
@@ -850,6 +855,61 @@ def api_vulns_rescan(background_tasks: BackgroundTasks):
     # KEVの再ダウンロードも含めて全ホストを強制的に再照合する
     background_tasks.add_task(vuln_scanner.run_due, True)
     return {"ok": True}
+
+
+@app.get("/api/vulns/detail")
+def api_vuln_detail(host: str, vuln_id: str, package: str):
+    detail = vuln_scanner.detail(host, vuln_id, package)
+    if not detail:
+        raise HTTPException(status_code=404, detail="not found")
+    detail["ai_available"] = bool(CF_AI_ACCOUNT_ID and CF_AI_GATEWAY_ID and CF_AI_TOKEN)
+    return detail
+
+
+VULN_ADVICE_SYSTEM_PROMPT = (
+    "あなたはLinuxサーバーの脆弱性対応を支援するセキュリティエンジニアです。"
+    "与えられたJSON（脆弱性の英語の説明、CISA KEV情報、対象ホストでの状況、確定済みの推奨手順）をもとに、"
+    "サーバー管理者向けに日本語で次の3点を簡潔に説明してください: "
+    "1) この脆弱性で何が起きるか（攻撃者に何ができるか）、"
+    "2) このホストでの影響の大きさ（例: ローカル権限昇格か遠隔から突けるか、該当機能を使っていそうか）、"
+    "3) 推奨対応（与えられた推奨手順の要点。手順に無いコマンドを新たに作らないこと）。"
+    "全体で400字以内。不確かなことは推測と明記し、断定しないでください。"
+)
+
+
+@app.post("/api/vulns/ai-advice")
+def api_vuln_ai_advice(payload: dict):
+    """対応ガイドの「AI解説」ボタン用。押されたときだけ呼び、結果はキャッシュする
+    （同じCVE・同じ版の状況では二度とAIを呼ばない＝AI Gatewayの費用を増やさない）。"""
+    detail = vuln_scanner.detail(payload.get("host", ""), payload.get("vuln_id", ""), payload.get("package", ""))
+    if not detail:
+        raise HTTPException(status_code=404, detail="not found")
+    cached = vuln_scanner.get_ai_advice(detail)
+    if cached:
+        return {"text": cached, "cached": True}
+    context = {
+        "cve": detail["cve"],
+        "description": (detail.get("description") or "")[:2000],
+        "ubuntu_priority": detail["priority"],
+        "cvss": detail.get("cvss"),
+        "kev": {
+            k: (detail["kev"] or {}).get(k)
+            for k in ("name", "short_description", "required_action", "ransomware")
+        } if detail["kev"] else None,
+        "host_os": detail["os"].get("pretty_name"),
+        "package": detail["package"],
+        "binaries": detail["binaries"],
+        "installed_version": detail["installed_version"],
+        "fixed_version": detail["fixed_version"],
+        "is_kernel": detail["is_kernel"],
+        "running_kernel": detail["kernel_release"],
+        "recommended_steps": detail["remediation"]["steps"],
+    }
+    text = _call_cf_ai(VULN_ADVICE_SYSTEM_PROMPT, json.dumps(context, ensure_ascii=False), timeout=30)
+    if not text:
+        raise HTTPException(status_code=503, detail="AI解説を取得できませんでした（AI Gateway未設定または応答なし）")
+    vuln_scanner.save_ai_advice(detail, text)
+    return {"text": text, "cached": False}
 
 
 async def _vuln_scheduler_loop():

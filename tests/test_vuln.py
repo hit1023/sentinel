@@ -209,5 +209,46 @@ class VulnScannerTests(unittest.TestCase):
         self.assertIsNotNone(self.scanner.summary()["hosts"][0]["scanned_at"])
 
 
+class RemediationTests(unittest.TestCase):
+    def finding(self, package, fixed=None, availability=None, in_kev=0):
+        return {"package": package, "installed_version": "1", "fixed_version": fixed,
+                "availability": availability, "in_kev": in_kev}
+
+    def test_fix_available_upgrades_installed_binaries(self):
+        r = vuln.remediation(self.finding("openssl", "2", "No subscription required"), ["libssl3t64", "openssl"], None)
+        self.assertEqual(r["key"], "upgrade")
+        self.assertIn("sudo apt update && sudo apt install --only-upgrade libssl3t64 openssl", [s.get("command") for s in r["steps"]])
+
+    def test_pro_only_fix(self):
+        r = vuln.remediation(self.finding("openssl", "2", "Available with Ubuntu Pro"), ["openssl"], None)
+        self.assertEqual(r["key"], "upgrade_pro")
+        self.assertTrue(any("pro attach" in (s.get("command") or "") for s in r["steps"]))
+
+    def test_installed_but_not_running_kernel_is_removed(self):
+        bins = ["linux-image-6.8.0-31-generic", "linux-modules-6.8.0-31-generic"]
+        r = vuln.remediation(self.finding("linux", None, in_kev=1), bins, "6.8.0-138-generic")
+        self.assertEqual(r["key"], "remove")
+        self.assertTrue(any("KEV" in n for n in r["notes"]))
+
+    def test_running_kernel_with_fix_needs_reboot(self):
+        bins = ["linux-image-6.8.0-31-generic"]
+        r = vuln.remediation(self.finding("linux", "6.8.0-44.44"), bins, "6.8.0-31-generic")
+        self.assertEqual(r["label"], "カーネル更新+再起動")
+        self.assertIn("sudo reboot", [s.get("command") for s in r["steps"]])
+
+    def test_running_kernel_without_fix_waits(self):
+        r = vuln.remediation(self.finding("linux"), ["linux-image-6.8.0-31-generic"], "6.8.0-31-generic")
+        self.assertEqual(r["label"], "修正待ち（稼働中カーネル）")
+
+    def test_kernel_headers_only_is_not_actionable(self):
+        r = vuln.remediation(self.finding("linux", in_kev=1), ["linux-libc-dev"], "6.8.0-138-generic")
+        self.assertEqual(r["key"], "none")
+
+    def test_unfixed_library_suggests_checking_dependents(self):
+        r = vuln.remediation(self.finding("mozjs91"), ["libmozjs-91-0"], None)
+        self.assertEqual(r["label"], "修正待ち：不要なら削除")
+        self.assertIn("apt-cache rdepends --installed libmozjs-91-0", [s.get("command") for s in r["steps"]])
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -1002,6 +1002,40 @@ body.alert-critical .topbar {
 .prio-low, .prio-negligible, .prio-unknown { color: var(--text-dim); }
 .vuln-nofix { color: var(--text-dim); font-style: italic; }
 
+.vuln-table tbody tr { cursor: pointer; }
+.vuln-table tbody tr:hover td { background: rgba(36,240,255,0.05); }
+.action-chip {
+  display: inline-block; font-size: 10px; padding: 1px 6px; border-radius: 3px;
+  border: 1px solid currentColor;
+}
+.action-upgrade { color: var(--neon-green); }
+.action-upgrade_pro { color: var(--neon-cyan); }
+.action-remove { color: var(--neon-cyan); }
+.action-wait { color: var(--text-dim); }
+.action-none { color: var(--text-dim); opacity: 0.7; }
+.vuln-modal { width: min(860px, 94vw); max-height: 86vh; overflow-y: auto; }
+.vg-section { margin-bottom: 18px; }
+.vg-section h4 {
+  margin: 0 0 8px; font-size: 11px; font-weight: 400; letter-spacing: 2px; color: var(--neon-cyan);
+}
+.vg-badges { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 14px; font-size: 12px; }
+.vg-kv { display: grid; grid-template-columns: 110px 1fr; gap: 4px 12px; font-size: 12px; }
+.vg-kv dt { color: var(--text-dim); }
+.vg-kv dd { margin: 0; word-break: break-all; }
+.vg-steps { margin: 0; padding-left: 20px; font-size: 12px; line-height: 1.6; }
+.vg-steps li { margin-bottom: 10px; }
+.vg-cmd {
+  display: flex; align-items: center; gap: 8px; margin-top: 4px;
+  background: rgba(0,0,0,0.4); border: 1px solid rgba(255,255,255,0.08); border-radius: 4px;
+  padding: 5px 8px;
+}
+.vg-cmd code { flex: 1; color: var(--neon-green); font-size: 12px; white-space: pre-wrap; word-break: break-all; }
+.vg-notes { margin: 0; padding-left: 18px; font-size: 11px; color: var(--text-dim); line-height: 1.6; }
+.vg-text { font-size: 12px; line-height: 1.6; color: #b9d6de; white-space: pre-wrap; }
+.vg-links { display: flex; flex-wrap: wrap; gap: 10px; font-size: 12px; }
+.vg-links a { color: var(--neon-cyan); }
+.vg-ai { border: 1px dashed var(--border); border-radius: 6px; padding: 10px 12px; }
+
 @media (max-width: 900px) {
   .stat-row { grid-template-columns: repeat(2, 1fr); }
   .main-grid { grid-template-columns: 1fr; }

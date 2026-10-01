@@ -12,6 +12,7 @@ Docker運用でもHITIDS_FS_PREFIX(/hostfs)経由でホスト側のパッケー�
 import hashlib
 import json
 import os
+import platform
 import time
 import urllib.error
 import urllib.request
@@ -131,6 +132,10 @@ class PackageWatcher:
                 "pretty_name": os_release.get("PRETTY_NAME", ""),
             },
             "ecosystem": osv_ecosystem(os_release),
+            # 稼働中のカーネル(uname -r)。コンテナはホストとカーネルを共有するため、
+            # Docker運用でもホストの値になる。マネージャーが「インストールされているが
+            # 起動していない古いカーネル（削除すれば解消）」を見分けるのに使う
+            "kernel_release": platform.release(),
             "packages": packages,
             "inventory_hash": digest,
             "collected_at": now,
