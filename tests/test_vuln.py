@@ -240,6 +240,21 @@ class VulnScannerTests(unittest.TestCase):
             lambda k, v: self.settings.__setitem__(k, v),
         )
 
+    def test_crossing_bulk_threshold_is_not_reported_as_resolved(self):
+        ids = [f"UBUNTU-CVE-2024-{2000 + i}" for i in range(vuln.BULK_THRESHOLD)]
+        for vid in ids:
+            DOCS[vid] = osv_doc(vid, "mozjs91", None, "medium")
+        self.addCleanup(lambda: [DOCS.pop(v, None) for v in ids])
+        self.osv.kev = []
+        self.osv.matches = {("mozjs91", "91.10"): ids}
+        self.send([{"name": "mozjs91", "version": "91.10"}], "a")
+        self.alerts.clear()
+        # OSV側で件数が増えて閾値を超え、件数のみ集計に切り替わった
+        self.osv.matches[("mozjs91", "91.10")] = ids + ["UBUNTU-CVE-2024-9999"]
+        self.scanner.run_due(force=True)
+        self.assertEqual(self.alerts, [])
+        self.assertEqual(self.scanner.summary()["hosts"][0]["bulk"][0]["count"], len(ids) + 1)
+
     def test_inventory_arriving_during_scan_is_not_dropped(self):
         # 照合中(ロック保持中)に届いた依頼は、実行中の側が拾って処理する
         self.scanner.lock.acquire()

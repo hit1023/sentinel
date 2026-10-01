@@ -410,6 +410,16 @@ class VulnScanner:
             key for key, f in current.items()
             if _is_kernel_headers_only(f["package"], bin_index.get((f["package"], f["installed_version"]), []))
         }
+        # 件数のみ集計（一括扱い）への出入りは、パッケージが変わったわけではないので
+        # 「解消」「新規」として通知しない（OSV側の件数増減で閾値をまたいだだけ）
+        bulk_now = {(b["package"], b["version"]) for b in bulk}
+        bulk_before = {(b["package"], b["version"]) for b in json.loads(inv.get("bulk_json") or "[]")}
+        for key in previous:
+            if (key[1], key[2]) in bulk_now and key not in current:
+                quiet.add(key)
+        for key in current:
+            if (key[1], key[2]) in bulk_before and key not in previous:
+                quiet.add(key)
         self._alert_diff(host, previous, current, is_first_scan, bulk, quiet)
 
     def _alert_diff(self, host: str, previous: dict, current: dict, is_first_scan: bool, bulk: list[dict],
@@ -422,11 +432,11 @@ class VulnScanner:
         # 優先度high以上で修正版が出ているもの（apt upgradeで直せる＝対応すべきもの）
         high_new = [
             f for key, f in current.items()
-            if key not in previous and not f["in_kev"]
+            if key not in previous and not f["in_kev"] and key not in (quiet or set())
             and PRIORITY_RANK.get(f["priority"], -1) >= PRIORITY_RANK["high"]
             and f["fixed_version"]
         ]
-        resolved = [key for key in previous if key not in current]
+        resolved = [key for key in previous if key not in current and key not in (quiet or set())]
 
         if is_first_scan:
             fixable = sum(1 for f in current.values() if f["fixed_version"])
