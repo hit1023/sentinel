@@ -195,6 +195,51 @@ class VulnScannerTests(unittest.TestCase):
         self.assertEqual(host["bulk"][0]["count"], len(many))
         self.assertEqual(host["kev"], 1)
 
+    def test_same_cve_on_two_installed_versions_keeps_both(self):
+        self.osv.matches[("linux-hwe-6.8", "6.8.0-124.124")] = ["UBUNTU-CVE-2024-0001"]
+        self.osv.matches[("linux-hwe-6.8", "6.8.0-138.138")] = ["UBUNTU-CVE-2024-0001"]
+        self.send([{"name": "linux-hwe-6.8", "version": "6.8.0-124.124"},
+                   {"name": "linux-hwe-6.8", "version": "6.8.0-138.138"}], "a")
+        versions = sorted(f["installed_version"] for f in self.scanner.summary()["findings"])
+        self.assertEqual(versions, ["6.8.0-124.124", "6.8.0-138.138"])
+
+    def test_migrates_old_findings_table_without_realerting(self):
+        conn = sqlite3.connect(self.db)
+        conn.execute("DROP TABLE host_findings")
+        conn.execute("""CREATE TABLE host_findings (host TEXT NOT NULL, vuln_id TEXT NOT NULL,
+            package TEXT NOT NULL, installed_version TEXT, fixed_version TEXT, availability TEXT,
+            cve TEXT, priority TEXT, in_kev INTEGER DEFAULT 0, first_seen REAL, last_seen REAL,
+            PRIMARY KEY (host, vuln_id, package))""")
+        conn.commit()
+        conn.close()
+        self.send([{"name": "sudo", "version": "1.9.15p5-3ubuntu5"}], "a")
+        conn = sqlite3.connect(self.db)
+        conn.execute("DROP TABLE host_findings")
+        conn.execute("""CREATE TABLE host_findings (host TEXT NOT NULL, vuln_id TEXT NOT NULL,
+            package TEXT NOT NULL, installed_version TEXT, fixed_version TEXT, availability TEXT,
+            cve TEXT, priority TEXT, in_kev INTEGER DEFAULT 0, first_seen REAL, last_seen REAL,
+            PRIMARY KEY (host, vuln_id, package))""")
+        conn.execute("INSERT INTO host_findings VALUES ('h-1','UBUNTU-CVE-2025-32463','sudo',"
+                     "'1.9.15p5-3ubuntu5','1.9.15p5-3ubuntu5.24.04.1','x','CVE-2025-32463','high',1,1,1)")
+        conn.commit()
+        conn.close()
+        self.setUp_scanner_again()
+        self.alerts.clear()
+        self.scanner.run_due(force=True)
+        self.assertEqual(self.alerts, [])  # 移行で行が保たれ、既存KEVが「新規」として再通知されない
+
+    def setUp_scanner_again(self):
+        def connect():
+            conn = sqlite3.connect(self.db)
+            conn.row_factory = sqlite3.Row
+            return conn
+        self.scanner = vuln.VulnScanner(
+            connect,
+            lambda cat, msg, sev, host: self.alerts.append((sev, msg)),
+            lambda k: self.settings.get(k, ""),
+            lambda k, v: self.settings.__setitem__(k, v),
+        )
+
     def test_inventory_arriving_during_scan_is_not_dropped(self):
         # 照合中(ロック保持中)に届いた依頼は、実行中の側が拾って処理する
         self.scanner.lock.acquire()
@@ -210,8 +255,8 @@ class VulnScannerTests(unittest.TestCase):
 
 
 class RemediationTests(unittest.TestCase):
-    def finding(self, package, fixed=None, availability=None, in_kev=0):
-        return {"package": package, "installed_version": "1", "fixed_version": fixed,
+    def finding(self, package, fixed=None, availability=None, in_kev=0, version="1"):
+        return {"package": package, "installed_version": version, "fixed_version": fixed,
                 "availability": availability, "in_kev": in_kev}
 
     def test_fix_available_upgrades_installed_binaries(self):
@@ -226,9 +271,24 @@ class RemediationTests(unittest.TestCase):
 
     def test_installed_but_not_running_kernel_is_removed(self):
         bins = ["linux-image-6.8.0-31-generic", "linux-modules-6.8.0-31-generic"]
-        r = vuln.remediation(self.finding("linux", None, in_kev=1), bins, "6.8.0-138-generic")
+        r = vuln.remediation(self.finding("linux", None, in_kev=1, version="6.8.0-31.31"), bins, "6.8.0-138-generic")
         self.assertEqual(r["key"], "remove")
         self.assertTrue(any("KEV" in n for n in r["notes"]))
+
+    def test_newer_kernel_waiting_for_reboot_is_never_removed(self):
+        # gateで実際に起きたケース: 138を導入済みだが124で稼働中（再起動待ち）
+        bins = ["linux-image-6.8.0-138-generic", "linux-modules-6.8.0-138-generic"]
+        r = vuln.remediation(self.finding("linux-hwe-6.8", version="6.8.0-138.138~22.04.1"),
+                             bins, "6.8.0-124-generic")
+        self.assertEqual(r["key"], "reboot")
+        self.assertFalse(any("remove" in (s.get("command") or "") for s in r["steps"]))
+
+    def test_running_kernel_mentions_pending_newer_kernel(self):
+        bins = ["linux-image-6.8.0-124-generic"]
+        r = vuln.remediation(self.finding("linux-hwe-6.8", version="6.8.0-124.124~22.04.1"), bins,
+                             "6.8.0-124-generic", [(6, 8, 0, 124), (6, 8, 0, 138)])
+        self.assertEqual(r["label"], "修正待ち（稼働中カーネル）")
+        self.assertTrue(any("6.8.0-138" in n for n in r["notes"]))
 
     def test_running_kernel_with_fix_needs_reboot(self):
         bins = ["linux-image-6.8.0-31-generic"]

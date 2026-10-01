@@ -1121,7 +1121,7 @@ function renderVulnTable() {
     const fixed = f.fixed_version
       ? escapeHtml(f.fixed_version + pro)
       : '<span class="vuln-nofix">未提供</span>';
-    return `<tr data-host="${escapeHtml(f.host)}" data-vuln="${escapeHtml(f.vuln_id)}" data-pkg="${escapeHtml(f.package)}" title="クリックで対応ガイドを表示">
+    return `<tr data-host="${escapeHtml(f.host)}" data-vuln="${escapeHtml(f.vuln_id)}" data-pkg="${escapeHtml(f.package)}" data-ver="${escapeHtml(f.installed_version || "")}" title="クリックで対応ガイドを表示">
       <td>${escapeHtml(f.host)}</td>
       <td>${escapeHtml(f.cve || "")}${kev}</td>
       <td class="prio-${escapeHtml(f.priority)}">${escapeHtml(f.priority)}</td>
@@ -1173,14 +1173,14 @@ function kvRow(label, value) {
   return value ? `<dt>${label}</dt><dd>${value}</dd>` : "";
 }
 
-async function openVulnGuide(host, vulnId, pkg) {
+async function openVulnGuide(host, vulnId, pkg, version) {
   const overlay = document.getElementById("vulnOverlay");
   const body = document.getElementById("vulnModalBody");
   body.innerHTML = '<div class="mono-dim">読み込み中…</div>';
   overlay.style.display = "flex";
   let d;
   try {
-    const params = new URLSearchParams({ host, vuln_id: vulnId, package: pkg });
+    const params = new URLSearchParams({ host, vuln_id: vulnId, package: pkg, version: version || "" });
     const res = await fetch(`/api/vulns/detail?${params}`);
     if (!res.ok) throw new Error(res.status);
     d = await res.json();
@@ -1264,7 +1264,7 @@ async function openVulnGuide(host, vulnId, pkg) {
       const res = await fetch("/api/vulns/ai-advice", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ host, vuln_id: vulnId, package: pkg }),
+        body: JSON.stringify({ host, vuln_id: vulnId, package: pkg, version }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.detail || res.status);
@@ -1279,7 +1279,7 @@ async function openVulnGuide(host, vulnId, pkg) {
 
 document.getElementById("vulnTbody").addEventListener("click", (ev) => {
   const tr = ev.target.closest("tr[data-vuln]");
-  if (tr) openVulnGuide(tr.dataset.host, tr.dataset.vuln, tr.dataset.pkg);
+  if (tr) openVulnGuide(tr.dataset.host, tr.dataset.vuln, tr.dataset.pkg, tr.dataset.ver);
 });
 
 document.getElementById("vulnModalBody").addEventListener("click", async (ev) => {

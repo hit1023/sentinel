@@ -93,10 +93,19 @@ def init_db(conn: sqlite3.Connection):
             in_kev INTEGER DEFAULT 0,
             first_seen REAL,
             last_seen REAL,
-            PRIMARY KEY (host, vuln_id, package)
+            PRIMARY KEY (host, vuln_id, package, installed_version)
         )
         """
     )
+    # 旧スキーマ(PKにinstalled_versionが無い)からの移行。同じソースの複数版（新旧カーネルが
+    # 両方入っている等）で同じCVEが上書きされ、稼働中カーネル側の行が消えていたため。
+    # 照合結果は前回との差分通知に使うので、捨てずにコピーする（捨てると全件「新規」扱いで再通知される）
+    pk_cols = [r[1] for r in conn.execute("PRAGMA table_info(host_findings)").fetchall() if r[5]]
+    if "installed_version" not in pk_cols:
+        conn.execute("ALTER TABLE host_findings RENAME TO host_findings_old")
+        init_db(conn)
+        conn.execute("INSERT OR IGNORE INTO host_findings SELECT * FROM host_findings_old")
+        conn.execute("DROP TABLE host_findings_old")
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS kev (
@@ -351,7 +360,7 @@ class VulnScanner:
                 if r["id"] in wanted
             }
             previous = {
-                (r["vuln_id"], r["package"]): dict(r)
+                (r["vuln_id"], r["package"], r["installed_version"]): dict(r)
                 for r in conn.execute("SELECT * FROM host_findings WHERE host=?", (host,)).fetchall()
             }
             is_first_scan = inv["scanned_at"] is None
@@ -363,8 +372,8 @@ class VulnScanner:
                     if not d:
                         continue  # 詳細取得に失敗したものは次回に回す
                     fixed, availability = _fixed_version(d, pkg, ecosystem)
-                    prev = previous.get((vid, pkg))
-                    current[(vid, pkg)] = {
+                    prev = previous.get((vid, pkg, version))
+                    current[(vid, pkg, version)] = {
                         "host": host,
                         "vuln_id": vid,
                         "package": pkg,
@@ -538,11 +547,13 @@ class VulnScanner:
             r["host"]: _binaries_index(json.loads(r["packages_json"] or "[]")) for r in inv_rows
         }
         kernels = {r["host"]: r["kernel_release"] for r in inv_rows}
+        installed_kernels = {h: _installed_kernel_abis(idx) for h, idx in binaries.items()}
         for f in findings:
             action = remediation(
                 f,
                 binaries.get(f["host"], {}).get((f["package"], f["installed_version"]), []),
                 kernels.get(f["host"]),
+                installed_kernels.get(f["host"]),
             )
             f["action_key"] = action["key"]
             f["action_label"] = action["label"]
@@ -567,13 +578,15 @@ class VulnScanner:
             "kev_count": len(kev_info),
         }
 
-    def detail(self, host: str, vuln_id: str, package: str) -> dict | None:
+    def detail(self, host: str, vuln_id: str, package: str, version: str | None = None) -> dict | None:
         """対応ガイド用の1件分の詳細（このホストでの状況・推奨手順・KEV情報・参考リンク）。"""
         with self.connect() as conn:
-            f = conn.execute(
-                "SELECT * FROM host_findings WHERE host=? AND vuln_id=? AND package=?",
-                (host, vuln_id, package),
-            ).fetchone()
+            sql = "SELECT * FROM host_findings WHERE host=? AND vuln_id=? AND package=?"
+            params = [host, vuln_id, package]
+            if version:
+                sql += " AND installed_version=?"
+                params.append(version)
+            f = conn.execute(sql, params).fetchone()
             if not f:
                 return None
             f = dict(f)
@@ -583,9 +596,8 @@ class VulnScanner:
             advice = conn.execute(
                 "SELECT text, created_at FROM vuln_ai_advice WHERE key=?", (_advice_key(f),)
             ).fetchone()
-        binaries = _binaries_index(json.loads(inv["packages_json"] or "[]")).get(
-            (f["package"], f["installed_version"]), []
-        )
+        bin_index = _binaries_index(json.loads(inv["packages_json"] or "[]"))
+        binaries = bin_index.get((f["package"], f["installed_version"]), [])
         f["binaries"] = binaries
         f["kernel_release"] = inv.get("kernel_release")
         f["is_kernel"] = _is_kernel(f["package"], binaries)
@@ -595,7 +607,9 @@ class VulnScanner:
             f["cvss"] = d["cvss"]
             f["published"] = d["published"]
         f["kev"] = dict(k) if k else None
-        f["remediation"] = remediation(f, binaries, inv.get("kernel_release"))
+        f["remediation"] = remediation(
+            f, binaries, inv.get("kernel_release"), _installed_kernel_abis(bin_index)
+        )
         cve = f["cve"] or ""
         f["links"] = [
             {"label": "Ubuntu CVE", "url": f"https://ubuntu.com/security/{cve}"},
@@ -654,7 +668,22 @@ def _is_kernel_headers_only(package: str, binaries: list[str]) -> bool:
     )
 
 
-def remediation(f: dict, binaries: list[str], kernel_release: str | None) -> dict:
+def _kernel_abi(text: str | None) -> tuple | None:
+    """'6.8.0-138.138~22.04.1' / '6.8.0-124-generic' → (6, 8, 0, 138)。新旧比較用。"""
+    m = re.search(r"(\d+)\.(\d+)\.(\d+)-(\d+)", text or "")
+    return tuple(int(x) for x in m.groups()) if m else None
+
+
+def _installed_kernel_abis(bin_index: dict) -> list[tuple]:
+    """ホストに入っているカーネル本体（イメージ/モジュール）の版の一覧。"""
+    return sorted({
+        abi for (pkg, ver), bins in bin_index.items()
+        if _is_kernel(pkg, bins) and (abi := _kernel_abi(ver))
+    })
+
+
+def remediation(f: dict, binaries: list[str], kernel_release: str | None,
+                installed_kernels: list[tuple] | None = None) -> dict:
     """照合結果1件に対する「このホストで何をすればいいか」を、修正版の有無・
     Ubuntu Proの要否・カーネルかどうか・稼働中かどうかから決める（AIに頼らない確定的なガイド）。
     key: UIの色分け用 / label: 一覧の短い表示 / steps: [{text, command?}] / notes: 補足"""
@@ -663,9 +692,22 @@ def remediation(f: dict, binaries: list[str], kernel_release: str | None) -> dic
     pro = bool(fixed and re.search(r"Pro", f.get("availability") or ""))
     bins = " ".join(binaries) or pkg
     kernel = _is_kernel(pkg, binaries)
-    running = None
+    # カーネルの場合は稼働中の版との関係で対応が真逆になる:
+    #   running = 稼働中 / older = 入っているだけの古い版（削除で解消）/
+    #   newer = 導入済みだが未起動の新しい版（再起動待ち。削除してはいけない）
+    relation = None
+    newer_installed = None
+    running_abi = _kernel_abi(kernel_release)
     if kernel and kernel_release:
-        running = any(kernel_release in b for b in binaries)
+        this_abi = _kernel_abi(f.get("installed_version"))
+        if any(kernel_release in b for b in binaries):
+            relation = "running"
+        elif this_abi and running_abi:
+            relation = "newer" if this_abi > running_abi else "older"
+    if kernel and running_abi:
+        newer = [k for k in (installed_kernels or []) if k > running_abi]
+        if newer:
+            newer_installed = "{}.{}.{}-{}".format(*newer[-1])
     notes = []
     if f.get("in_kev"):
         notes.append("CISA KEV掲載＝実際の攻撃での悪用が確認済み。他の脆弱性より優先して対応する")
@@ -685,7 +727,28 @@ def remediation(f: dict, binaries: list[str], kernel_release: str | None) -> dic
             "notes": ["linux-libc-devはbuild-essential等が依存しているため、削除はしないこと"],
         }
 
-    if kernel and running is False:
+    if relation == "newer":
+        steps = [
+            {"text": f"このカーネル({f['installed_version']})はインストール済みだが、まだ起動していない新しい版"
+                     f"（稼働中は{kernel_release}）。カーネル更新後に再起動していない状態なので、削除はしないこと"},
+        ]
+        if fixed:
+            steps.append({"text": f"このCVEは修正版({fixed})以降で直る。まず更新する",
+                          "command": "sudo apt update && sudo apt full-upgrade"})
+        steps += [
+            {"text": "再起動して新しいカーネルに切り替える", "command": "sudo reboot"},
+            {"text": "再起動後、稼働中のカーネルを確認する", "command": "uname -r"},
+        ]
+        return {
+            "key": "reboot",
+            "label": "再起動待ちの新カーネル",
+            "steps": steps,
+            "notes": notes + ([] if fixed else
+                              ["この新しい版でもこのCVEの修正版はまだ提供されていない。"
+                               "再起動しても解消はしないが、他の修正が反映される"]),
+        }
+
+    if relation == "older":
         return {
             "key": "remove",
             "label": "未使用カーネル：削除で解消",
@@ -741,7 +804,10 @@ def remediation(f: dict, binaries: list[str], kernel_release: str | None) -> dic
                 {"text": "脆弱な機能（モジュール）を使っていなければ無効化で緩和できる場合がある。"
                          "下のKEV/Ubuntuのリンクで影響範囲を確認する"},
             ],
-            "notes": notes + ["SENTINELは毎日再照合し、修正版が出た時点で表示が「カーネル更新+再起動」に変わる"],
+            "notes": notes + (
+                [f"新しいカーネル({newer_installed})が導入済みで再起動待ち。再起動で他の修正は反映される"]
+                if newer_installed and relation == "running" else []
+            ) + ["SENTINELは毎日再照合し、修正版が出た時点で表示が「カーネル更新+再起動」に変わる"],
         }
 
     return {

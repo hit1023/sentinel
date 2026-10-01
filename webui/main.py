@@ -858,8 +858,8 @@ def api_vulns_rescan(background_tasks: BackgroundTasks):
 
 
 @app.get("/api/vulns/detail")
-def api_vuln_detail(host: str, vuln_id: str, package: str):
-    detail = vuln_scanner.detail(host, vuln_id, package)
+def api_vuln_detail(host: str, vuln_id: str, package: str, version: str | None = None):
+    detail = vuln_scanner.detail(host, vuln_id, package, version)
     if not detail:
         raise HTTPException(status_code=404, detail="not found")
     detail["ai_available"] = bool(CF_AI_ACCOUNT_ID and CF_AI_GATEWAY_ID and CF_AI_TOKEN)
@@ -881,7 +881,9 @@ VULN_ADVICE_SYSTEM_PROMPT = (
 def api_vuln_ai_advice(payload: dict):
     """対応ガイドの「AI解説」ボタン用。押されたときだけ呼び、結果はキャッシュする
     （同じCVE・同じ版の状況では二度とAIを呼ばない＝AI Gatewayの費用を増やさない）。"""
-    detail = vuln_scanner.detail(payload.get("host", ""), payload.get("vuln_id", ""), payload.get("package", ""))
+    detail = vuln_scanner.detail(
+        payload.get("host", ""), payload.get("vuln_id", ""), payload.get("package", ""), payload.get("version")
+    )
     if not detail:
         raise HTTPException(status_code=404, detail="not found")
     cached = vuln_scanner.get_ai_advice(detail)
