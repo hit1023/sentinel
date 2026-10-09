@@ -958,6 +958,47 @@ body.alert-critical .topbar {
   to { opacity: 1; transform: translateY(0); }
 }
 
+/* --- ATTACK MAP --- */
+.attack-row { display: block; margin-bottom: 18px; }
+.attack-panel { min-height: 0; }
+.attack-map-wrap {
+  position: relative; height: 440px; overflow: hidden; border-radius: 6px;
+  background: radial-gradient(ellipse at 60% 40%, rgba(36,240,255,0.06), transparent 70%);
+}
+.attack-canvas { position: absolute; inset: 0; }
+.attack-canvas canvas { position: absolute; inset: 0; display: block; }
+.attack-top {
+  position: absolute; top: 10px; left: 12px; width: 190px; font-size: 11px;
+  background: rgba(5,7,10,0.72); border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px;
+}
+.attack-top-title { color: var(--neon-cyan); letter-spacing: 1.5px; font-size: 10px; margin-bottom: 6px; }
+.attack-top-row { display: flex; align-items: center; gap: 6px; margin-bottom: 3px; }
+.attack-flag { width: 18px; }
+.attack-cc { width: 22px; color: #d7f6ff; }
+.attack-bar { flex: 1; height: 4px; background: rgba(255,255,255,0.06); border-radius: 2px; overflow: hidden; }
+.attack-bar span { display: block; height: 100%; background: linear-gradient(90deg, #ff3860, #ffb347); }
+.attack-count { min-width: 40px; text-align: right; color: var(--text-dim); }
+.attack-ticker {
+  position: absolute; left: 12px; bottom: 34px; max-width: calc(100% - 24px);
+  font-size: 11px; line-height: 1.6; pointer-events: none;
+}
+.attack-tick { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-shadow: 0 0 6px #000; }
+.attack-tick:first-child { animation: tick-in 0.4s ease-out; }
+@keyframes tick-in { from { opacity: 0; transform: translateX(-12px); } to { opacity: 1; transform: none; } }
+.attack-legend {
+  position: absolute; right: 12px; bottom: 10px; display: flex; flex-wrap: wrap; gap: 12px;
+  font-size: 10px; color: var(--text-dim);
+}
+.attack-legend i { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 4px; vertical-align: middle; }
+.attack-error { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; }
+@media (max-width: 700px) {
+  /* 狭い画面では地図を上に置き、上位国・ティッカー・凡例はその下に縦に並べる */
+  .attack-map-wrap { height: auto; }
+  .attack-canvas { position: relative; height: 200px; }
+  .attack-top, .attack-ticker, .attack-legend { position: static; width: auto; max-width: none; margin-top: 10px; }
+  .attack-top-row:nth-child(n+7) { display: none; }
+}
+
 /* --- VULNERABILITIES --- */
 .vuln-row { display: block; margin-bottom: 18px; }
 .vuln-panel { min-height: 0; }

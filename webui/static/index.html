@@ -292,6 +292,29 @@
     </div>
   </section>
 
+  <section class="attack-row">
+    <div class="panel attack-panel">
+      <div class="panel-head">
+        <span>ATTACK MAP（直近24時間・外部からの攻撃）</span>
+        <span class="mono-dim" id="attackStats">--</span>
+      </div>
+      <div class="attack-map-wrap" id="attackMapWrap">
+        <div class="attack-canvas" id="attackCanvasArea">
+          <canvas id="attackBase"></canvas>
+          <canvas id="attackFx"></canvas>
+        </div>
+        <div class="attack-top" id="attackTop"></div>
+        <div class="attack-ticker" id="attackTicker"></div>
+        <div class="attack-legend">
+          <span><i style="background:#ff3860"></i>SSH攻撃</span>
+          <span><i style="background:#ffb347"></i>Web攻撃</span>
+          <span><i style="background:#c77dff"></i>不審ログイン成功</span>
+          <span title="ログイン失敗・Webスキャンなど、失敗に終わった（防げた）攻撃を表す演出"><i style="background:#39ff8a"></i>打ち返し（防御成功）</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
   <section class="vuln-row">
     <div class="panel vuln-panel">
       <div class="panel-head">
@@ -373,5 +396,10 @@
 
 <script src="netbg.js"></script>
 <script src="app.js"></script>
+<!-- ATTACK MAP用: 地図投影(d3-geo)と世界地図データの展開(topojson) -->
+<script src="https://cdn.jsdelivr.net/npm/d3-array@3"></script>
+<script src="https://cdn.jsdelivr.net/npm/d3-geo@3"></script>
+<script src="https://cdn.jsdelivr.net/npm/topojson-client@3"></script>
+<script src="attackmap.js"></script>
 </body>
 </html>

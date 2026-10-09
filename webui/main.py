@@ -18,6 +18,7 @@ from email.message import EmailMessage
 from fastapi import BackgroundTasks, FastAPI, Header, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
 
+import attackmap
 import vuln
 
 # コンテナはTZ設定に関わらずUTCで動くことが多いため、表示・保存する時刻は
@@ -616,6 +617,7 @@ def _emit_internal_alert(category: str, message: str, severity: str, host: str):
 
 
 vuln_scanner = vuln.VulnScanner(_db_connect, _emit_internal_alert, _get_app_setting, _set_app_setting)
+attack_map = attackmap.AttackMap(_db_connect)
 
 
 @app.post("/api/ingest/alert")
@@ -1044,6 +1046,24 @@ def api_alerts_history(
     with _db_connect() as conn:
         rows = conn.execute(query, params).fetchall()
     return {"alerts": [dict(r) for r in rows]}
+
+
+@app.get("/api/attack-map")
+def api_attack_map(hours: float = 24, since: float | None = None):
+    """ATTACK MAPパネル用。攻撃系アラート(auth_watch/web_watch、CRITICAL/WARNINGは監査DBに
+    全件残っている)から攻撃元IPの位置・集計・直近イベントを返す。
+    since指定時は、その時刻より新しいイベントだけを返す（ライブ描画用の軽量ポーリング）。"""
+    start = since if since else time.time() - min(max(hours, 1), 24 * 7) * 3600
+    with _db_connect() as conn:
+        rows = conn.execute(
+            "SELECT * FROM alerts WHERE category IN ('auth_watch', 'web_watch') AND epoch > ?"
+            " ORDER BY epoch ASC",
+            (start,),
+        ).fetchall()
+    data = attack_map.build([dict(r) for r in rows])
+    if since:
+        return {"events": data["events"], "home": data["home"]}
+    return data
 
 
 @app.get("/api/stats")
