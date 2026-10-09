@@ -2,9 +2,9 @@
 // データは /api/attack-map（直近24時間の攻撃系アラート、攻撃元IPの緯度経度つき）。
 //  - ライブ: 5秒ごとに新着イベントを取得し、明るい線で描く（まとめて届いたら少しずつずらして「ぶわっ」と出す）
 //  - リプレイ: 新着が無い間は直近24時間のイベントを薄くランダム再生し、地図を常に動かしておく
-//  - 打ち返し: ログイン失敗・Webスキャン＝「失敗に終わった攻撃」は、着弾地点で火花を散らし、
-//    緑の光弾が同じ弧をたどって攻撃元へ跳ね返る（実際に反撃しているわけではなく、防げたことの表現）。
-//    「不審なログイン成功」は防げていないので跳ね返さない
+//  - ガード: 自宅のまわりにシールドを張り、ログイン失敗・Webスキャン＝「失敗に終わった攻撃」は
+//    シールド表面で止まって押し返され、当たった面が光って火花が反射方向に散る（防げたことの表現）。
+//    「不審なログイン成功」は防げていないので、シールドを貫通して自宅に着弾する
 (function () {
   const wrap = document.getElementById("attackMapWrap");
   if (!wrap) return;
@@ -30,9 +30,13 @@
   let lastEpoch = 0;        // ライブ取得の起点
   const arcs = [];          // 描画中の線
   const impacts = [];       // 着弾・発射の波紋
-  const returns = [];       // 打ち返しの光弾
-  const sparks = [];        // 着弾時の火花パーティクル
-  const REPEL_COLOR = [57, 255, 138];
+  const sparks = [];        // ガード時の火花パーティクル
+  const shieldHits = [];    // シールドの被弾箇所の発光
+  let shieldFlash = 0;      // シールド全体の明滅（被弾で上がり、徐々に戻る）
+  const SHIELD_COLOR = [57, 255, 138];
+  function shieldRadius() {
+    return Math.max(16, Math.min(34, width * 0.022));
+  }
   const pending = [];       // これから発射するライブイベント（時刻つき）
   let nextReplayAt = 0;
 
@@ -114,15 +118,24 @@
     // 制御点を中点から上へ持ち上げて弧にする（遠いほど高く跳ねる）
     const mx = (from[0] + to[0]) / 2;
     const my = (from[1] + to[1]) / 2 - Math.min(dist * 0.45, height * 0.42);
-    arcs.push({
-      from, to, ctrl: [mx, my],
+    const blocked = ev.kind !== "login";
+    const arc = {
+      from, to, ctrl: [mx, my], blocked, stopT: 1,
       color: KIND_COLORS[ev.kind] || KIND_COLORS.ssh,
       alpha: live ? 1 : 0.5,
       width: live ? 2 : 1.3,
       start: performance.now(),
       duration: 900 + dist * 2.2,
       ev, live,
-    });
+    };
+    if (blocked) {
+      // 弧がシールド（自宅中心の円）に触れる位置を探し、そこで止める
+      const R = shieldRadius();
+      let t = 1;
+      while (t > 0 && Math.hypot(bezier(arc, t)[0] - to[0], bezier(arc, t)[1] - to[1]) < R) t -= 0.004;
+      arc.stopT = t;
+    }
+    arcs.push(arc);
     impacts.push({ x: from[0], y: from[1], start: performance.now(), color: KIND_COLORS[ev.kind] || KIND_COLORS.ssh, alpha: live ? 0.9 : 0.4, size: 14 });
     if (live) pushTicker(ev);
   }
@@ -144,10 +157,17 @@
 
   function drawArc(a, now) {
     const raw = (now - a.start) / a.duration;
-    const head = Math.min(1, raw < 1 ? easeOutBack(raw) : 1);
+    const end = a.stopT;
+    const reach = (raw < 1 ? easeOutBack(raw) : 1) * end;
+    // ガードされる攻撃は、行き過ぎ分がシールドで跳ね返されて少し押し戻される（ぼよん）
+    const head = a.blocked ? (reach > end ? end - (reach - end) * 1.6 : reach) : Math.min(1, reach);
+    if (a.blocked && reach >= end && !a.guarded) {
+      a.guarded = true;
+      guard(a, now);
+    }
     // 着弾後は尾が先端へ追いつくように縮みながら消える
-    const tailStart = raw < 1 ? Math.max(0, head - 0.55) : Math.min(1, (raw - 1) * 1.6 + 0.45);
-    if (tailStart >= 1) return false;
+    const tailStart = raw < 1 ? Math.max(0, head - 0.55) : Math.min(end, head - 0.55 + (raw - 1) * 1.6);
+    if (tailStart >= end - 0.001) return false;
     const [r, g, b] = a.color;
     const segments = 28;
     for (let i = 0; i < segments; i++) {
@@ -173,68 +193,89 @@
       fxCtx.beginPath();
       fxCtx.arc(p[0], p[1], 9 * a.width, 0, Math.PI * 2);
       fxCtx.fill();
-    } else if (!a.landed) {
+    } else if (!a.blocked && !a.landed) {
+      // 防げなかった攻撃: シールドを貫通して自宅に着弾
       a.landed = true;
-      impacts.push({ x: a.to[0], y: a.to[1], start: now, color: a.color, alpha: a.alpha, size: a.live ? 30 : 16 });
-      if (a.ev.kind !== "login") repel(a, now);
+      impacts.push({ x: a.to[0], y: a.to[1], start: now, color: a.color, alpha: a.alpha, size: a.live ? 34 : 18 });
     }
     return true;
   }
 
-  // 防げた攻撃: 着弾点で火花を散らし、緑の光弾を攻撃元へ打ち返す
-  function repel(a, now) {
-    const n = a.live ? 14 : 6;
+  // 防げた攻撃: シールドの当たった面を光らせ、火花を入射角に応じた反射方向へ散らす
+  function guard(a, now) {
+    const p = bezier(a, a.stopT);
+    const q = bezier(a, Math.max(0, a.stopT - 0.02));
+    const angle = Math.atan2(p[1] - a.to[1], p[0] - a.to[0]);   // 自宅から見た被弾方向
+    let dx = p[0] - q[0];
+    let dy = p[1] - q[1];
+    const len = Math.hypot(dx, dy) || 1;
+    dx /= len;
+    dy /= len;
+    const nx = Math.cos(angle);
+    const ny = Math.sin(angle);
+    const dot = dx * nx + dy * ny;
+    const rx = dx - 2 * dot * nx;   // 反射ベクトル
+    const ry = dy - 2 * dot * ny;
+    const n = a.live ? 16 : 7;
     for (let i = 0; i < n; i++) {
-      const ang = Math.random() * Math.PI * 2;
-      const speed = (a.live ? 1.6 : 1) * (0.6 + Math.random() * 1.8);
+      const spread = (Math.random() - 0.5) * 1.6;
+      const cos = Math.cos(spread);
+      const sin = Math.sin(spread);
+      const speed = (a.live ? 1.8 : 1.1) * (0.5 + Math.random() * 1.6);
       sparks.push({
-        x: a.to[0], y: a.to[1], vx: Math.cos(ang) * speed, vy: Math.sin(ang) * speed - 0.6,
-        start: now, life: 500 + Math.random() * 500,
-        color: Math.random() < 0.6 ? REPEL_COLOR : a.color, alpha: a.alpha,
+        x: p[0], y: p[1],
+        vx: (rx * cos - ry * sin) * speed, vy: (rx * sin + ry * cos) * speed,
+        start: now, life: 450 + Math.random() * 500,
+        color: Math.random() < 0.55 ? SHIELD_COLOR : a.color, alpha: a.alpha,
       });
     }
-    returns.push({ arc: a, start: now + 120, duration: a.duration * 0.55, alpha: a.alpha, live: a.live });
+    shieldHits.push({ angle, start: now, color: a.color, alpha: a.alpha, live: a.live });
+    shieldFlash = Math.min(1, shieldFlash + (a.live ? 0.5 : 0.2));
   }
 
-  function drawReturn(rt, now) {
-    const raw = (now - rt.start) / rt.duration;
-    if (raw < 0) return true;
-    if (raw >= 1) {
-      // 攻撃元に命中: 緑の小さな波紋
-      impacts.push({ x: rt.arc.from[0], y: rt.arc.from[1], start: now, color: REPEL_COLOR, alpha: rt.alpha, size: rt.live ? 18 : 10 });
-      return false;
-    }
-    const at = 1 - easeOutQuad(raw); // 着弾点(t=1)から攻撃元(t=0)へ、減速しながら戻る
-    const [r, g, b] = REPEL_COLOR;
-    const segments = 10;
-    for (let i = 0; i < segments; i++) {
-      const t0 = Math.min(1, at + (i / segments) * 0.12);
-      const t1 = Math.min(1, at + ((i + 1) / segments) * 0.12);
-      const p0 = bezier(rt.arc, t0);
-      const p1 = bezier(rt.arc, t1);
-      const k = 1 - i / segments;
-      fxCtx.strokeStyle = `rgba(${r},${g},${b},${rt.alpha * k * 0.9})`;
-      fxCtx.lineWidth = (rt.live ? 2.2 : 1.4) * k + 0.3;
-      fxCtx.beginPath();
-      fxCtx.moveTo(p0[0], p0[1]);
-      fxCtx.lineTo(p1[0], p1[1]);
-      fxCtx.stroke();
-    }
-    const p = bezier(rt.arc, at);
-    const rad = rt.live ? 7 : 4.5;
-    const glow = fxCtx.createRadialGradient(p[0], p[1], 0, p[0], p[1], rad);
-    glow.addColorStop(0, `rgba(255,255,255,${rt.alpha})`);
-    glow.addColorStop(0.4, `rgba(${r},${g},${b},${rt.alpha * 0.8})`);
-    glow.addColorStop(1, `rgba(${r},${g},${b},0)`);
+  // 自宅まわりのシールド: 常時うっすら回転する点線リング＋被弾箇所の発光
+  function drawShield(now) {
+    const h = projection([data.home.lon, data.home.lat]);
+    if (!h) return;
+    const R = shieldRadius();
+    const [r, g, b] = SHIELD_COLOR;
+    shieldFlash *= 0.94;
+    const glow = fxCtx.createRadialGradient(h[0], h[1], R * 0.4, h[0], h[1], R);
+    glow.addColorStop(0, `rgba(${r},${g},${b},0)`);
+    glow.addColorStop(1, `rgba(${r},${g},${b},${0.05 + 0.18 * shieldFlash})`);
     fxCtx.fillStyle = glow;
     fxCtx.beginPath();
-    fxCtx.arc(p[0], p[1], rad, 0, Math.PI * 2);
+    fxCtx.arc(h[0], h[1], R, 0, Math.PI * 2);
     fxCtx.fill();
-    return true;
-  }
-
-  function easeOutQuad(t) {
-    return 1 - (1 - t) * (1 - t);
+    fxCtx.save();
+    fxCtx.setLineDash([3, 5]);
+    fxCtx.lineDashOffset = -now / 80;
+    fxCtx.strokeStyle = `rgba(${r},${g},${b},${0.3 + 0.5 * shieldFlash})`;
+    fxCtx.lineWidth = 1;
+    fxCtx.beginPath();
+    fxCtx.arc(h[0], h[1], R, 0, Math.PI * 2);
+    fxCtx.stroke();
+    fxCtx.restore();
+    for (let i = shieldHits.length - 1; i >= 0; i--) {
+      const hit = shieldHits[i];
+      const t = (now - hit.start) / 700;
+      if (t >= 1) {
+        shieldHits.splice(i, 1);
+        continue;
+      }
+      const span = 0.55 + 0.5 * t;   // 当たった面から光が左右に広がる
+      fxCtx.strokeStyle = `rgba(${r},${g},${b},${hit.alpha * (1 - t)})`;
+      fxCtx.lineWidth = (hit.live ? 3.5 : 2) * (1 - t) + 0.5;
+      fxCtx.beginPath();
+      fxCtx.arc(h[0], h[1], R + 1.5 * t, hit.angle - span, hit.angle + span);
+      fxCtx.stroke();
+      const [cr, cg, cb] = hit.color;
+      fxCtx.strokeStyle = `rgba(${cr},${cg},${cb},${hit.alpha * 0.6 * (1 - t)})`;
+      fxCtx.lineWidth = 1;
+      fxCtx.beginPath();
+      fxCtx.arc(h[0], h[1], R + 4 + 6 * t, hit.angle - span * 0.6, hit.angle + span * 0.6);
+      fxCtx.stroke();
+    }
   }
 
   function drawSpark(sp, now) {
@@ -314,7 +355,7 @@
       drawSources(now);
       fxCtx.globalCompositeOperation = "lighter";
       for (let i = arcs.length - 1; i >= 0; i--) if (!drawArc(arcs[i], now)) arcs.splice(i, 1);
-      for (let i = returns.length - 1; i >= 0; i--) if (!drawReturn(returns[i], now)) returns.splice(i, 1);
+      drawShield(now);
       for (let i = sparks.length - 1; i >= 0; i--) if (!drawSpark(sparks[i], now)) sparks.splice(i, 1);
       for (let i = impacts.length - 1; i >= 0; i--) if (!drawImpact(impacts[i], now)) impacts.splice(i, 1);
       fxCtx.globalCompositeOperation = "source-over";
