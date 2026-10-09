@@ -197,6 +197,7 @@
       // 防げなかった攻撃: シールドを貫通して自宅に着弾
       a.landed = true;
       impacts.push({ x: a.to[0], y: a.to[1], start: now, color: a.color, alpha: a.alpha, size: a.live ? 34 : 18 });
+      if (a.live) bumpCountry(a.ev);
     }
     return true;
   }
@@ -230,6 +231,7 @@
       });
     }
     shieldHits.push({ angle, start: now, color: a.color, alpha: a.alpha, live: a.live });
+    if (a.live) bumpCountry(a.ev);
     shieldFlash = Math.min(1, shieldFlash + (a.live ? 0.5 : 0.2));
   }
 
@@ -369,7 +371,24 @@
     return String.fromCodePoint(...[...cc.toUpperCase()].map((ch) => 0x1f1e6 + ch.charCodeAt(0) - 65));
   }
 
-  function renderInfo() {
+  // ライブの攻撃が着弾した瞬間に、その国のカウントを+1して行を光らせる
+  // （サーバー側の正確な24時間集計は60秒ごとのloadFullで上書きされる）
+  function bumpCountry(ev) {
+    const key = ev.cc || ev.country;
+    let c = data.top_countries.find((x) => (x.cc || x.country) === key);
+    if (!c) {
+      c = { cc: ev.cc, country: ev.country, count: 0, ips: 1 };
+      data.top_countries.push(c);
+    }
+    c.count += 1;
+    data.top_countries.sort((x, y) => y.count - x.count);
+    data.top_countries = data.top_countries.slice(0, 10);
+    data.total_events += 1;
+    data.located_events += 1;
+    renderInfo(key);
+  }
+
+  function renderInfo(bumpedKey) {
     const top = document.getElementById("attackTop");
     const stats = document.getElementById("attackStats");
     stats.textContent = `${data.total_events.toLocaleString()}件 / ${data.unique_ips.toLocaleString()} IP`
@@ -377,7 +396,7 @@
     const max = Math.max(1, ...data.top_countries.map((c) => c.count));
     top.innerHTML = '<div class="attack-top-title">TOP SOURCES / 24H</div>' + (data.top_countries.length
       ? data.top_countries.map((c) => `
-        <div class="attack-top-row" title="${escapeHtml(`${c.country}: ${c.count}件 / ${c.ips} IP`)}">
+        <div class="attack-top-row${bumpedKey && (c.cc || c.country) === bumpedKey ? " bump" : ""}" title="${escapeHtml(`${c.country}: ${c.count}件 / ${c.ips} IP`)}">
           <span class="attack-flag">${flag(c.cc)}</span>
           <span class="attack-cc">${escapeHtml(c.cc || "??")}</span>
           <span class="attack-bar"><span style="width:${(c.count / max) * 100}%"></span></span>
@@ -429,12 +448,18 @@
       const events = fresh.events.filter((e) => e.epoch > lastEpoch);
       if (!events.length) return;
       lastEpoch = events[events.length - 1].epoch;
+      data.events = data.events.concat(events).slice(-400);
+      // タブが裏にある間はアニメーションが止まるので、発射予約はせずカウントだけ進める
+      // （予約すると、タブに戻った瞬間に溜まった分が一斉に飛んでしまう）
+      if (document.hidden) {
+        events.forEach(bumpCountry);
+        return;
+      }
       // まとめて届いた分は次のポーリングまでの間に散らして発射する（一斉に出ると見えないため）
       const now = performance.now();
       events.forEach((ev, i) => {
         pending.push({ at: now + (i * (LIVE_POLL_MS * 0.9)) / events.length + Math.random() * 120, ev });
       });
-      data.events = data.events.concat(events).slice(-400);
     } catch (err) {
       console.error("ATTACK MAPのライブ取得に失敗", err);
     }
