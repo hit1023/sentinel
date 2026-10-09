@@ -24,6 +24,11 @@ SYSTEM_PROMPT = (
 )
 
 
+# プロンプトでは40〜80文字を指示している。小さいモデル(llama-3.1-8b)はたまに指示を無視して
+# アラートと無関係な長文（映画監督とビールの話など）を返すため、これを超えるものは捨てる
+MAX_COMMENT_CHARS = 200
+
+
 @dataclass
 class TriageResult:
     is_threat: bool
@@ -64,11 +69,15 @@ def _parse_response(text: str) -> TriageResult:
         verdict = first.split(":", 1)[1].strip()
         is_threat = not verdict.startswith("NO")
         comment = " ".join(lines[1:]).strip() or None
+        if comment and len(comment) > MAX_COMMENT_CHARS:
+            # 形式は守っていても本文が暴走している場合は、判定ごと信用しない
+            return TriageResult(is_threat=True, comment=None)
         return TriageResult(is_threat=is_threat, comment=comment)
 
-    # 期待した形式で返ってこなかった場合は、全文をコメント扱いにしつつ
-    # 脅威判定は安全側(True)に倒す
-    return TriageResult(is_threat=True, comment=" ".join(lines).strip() or None)
+    # 期待した形式で返ってこなかった場合は、AIが指示を無視して無関係な文章を生成している
+    # ことが多い（実例: アラートと無関係な映画監督の話）。表示すると紛らわしいので
+    # コメントは捨て、脅威判定は安全側(True=通知を消さない)に倒す
+    return TriageResult(is_threat=True, comment=None)
 
 
 def triage(category: str, severity: str, message: str, cfg: dict) -> TriageResult | None:

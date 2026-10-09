@@ -634,6 +634,11 @@ async def ingest_alert(
     record.setdefault("epoch", now)
     if "timestamp" not in record:
         record["timestamp"] = datetime.datetime.fromtimestamp(record["epoch"], JST).strftime("%Y-%m-%dT%H:%M:%S")
+    # 旧バージョンのエージェントは、AIが指示を無視して返した無関係な長文もそのまま
+    # ai_summaryに入れてくる（実例: 映画監督とビールの話）。プロンプトは40〜80文字指定なので、
+    # 明らかに長いものはマネージャー側でも捨てる（エージェント更新を待たずに全ホストへ効かせる）
+    if record.get("ai_summary") and len(record["ai_summary"]) > 200:
+        record["ai_summary"] = None
     # AIの判定より先に、ユーザー登録の抑制ルール・SSH許可リストを適用する
     # （「これは脅威ではない」と一度教えたものはAIの結果を待たず確実に黙らせる）
     _apply_ssh_whitelist(record)
