@@ -47,7 +47,8 @@ def init_db(conn):
 
 
 def classify(record: dict) -> tuple[str, str] | None:
-    """攻撃として地図に載せるアラートなら (ip, kind) を返す。kind: ssh / web / login"""
+    """攻撃として地図に載せるアラートなら (ip, kind) を返す。
+    kind: ssh / web / login（不審ログイン成功）/ webbreach（Webで機密パス等に成功応答が返った）"""
     category = record.get("category")
     message = record.get("message") or ""
     if category == "auth_watch":
@@ -55,7 +56,8 @@ def classify(record: dict) -> tuple[str, str] | None:
             return None  # 普段のログイン（自分自身）は攻撃ではない
         kind = "login" if "ログイン成功" in message else "ssh"
     elif category == "web_watch":
-        kind = "web"
+        # 機密パス等への2xx応答は「防げていない」攻撃。SSHの不審ログイン成功と同様にシールドを貫通させる
+        kind = "webbreach" if "成功応答" in message else "web"
     else:
         return None
     m = IP_RE.search(message)

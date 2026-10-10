@@ -15,8 +15,8 @@
   const baseCtx = baseCanvas.getContext("2d");
   const fxCtx = fxCanvas.getContext("2d");
 
-  const KIND_COLORS = { ssh: [255, 56, 96], web: [255, 179, 71], login: [199, 125, 255] };
-  const KIND_LABELS = { ssh: "SSH攻撃", web: "Web攻撃", login: "不審ログイン成功" };
+  const KIND_COLORS = { ssh: [255, 56, 96], web: [255, 179, 71], login: [199, 125, 255], webbreach: [255, 95, 31] };
+  const KIND_LABELS = { ssh: "SSH攻撃", web: "Web攻撃", login: "不審ログイン成功", webbreach: "Web攻撃（成功応答）" };
   const MAX_ARCS = 70;
   const LIVE_POLL_MS = 5000;
   const FULL_RELOAD_MS = 60000;
@@ -118,7 +118,7 @@
     // 制御点を中点から上へ持ち上げて弧にする（遠いほど高く跳ねる）
     const mx = (from[0] + to[0]) / 2;
     const my = (from[1] + to[1]) / 2 - Math.min(dist * 0.45, height * 0.42);
-    const blocked = ev.kind !== "login";
+    const blocked = ev.kind !== "login" && ev.kind !== "webbreach";
     const arc = {
       from, to, ctrl: [mx, my], blocked, stopT: 1,
       color: KIND_COLORS[ev.kind] || KIND_COLORS.ssh,

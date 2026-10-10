@@ -29,6 +29,14 @@ class ClassifyTests(unittest.TestCase):
             ("2.57.122.33", "login"),
         )
 
+    def test_web_success_response_is_a_breach(self):
+        self.assertEqual(
+            attackmap.classify({"category": "web_watch", "message": "Webアクセス異常: 不審なリクエストに成功応答（攻撃が通った可能性） ip=185.220.101.4 件数=1 期間=300秒 host=a.example"}),
+            ("185.220.101.4", "webbreach"))
+        self.assertEqual(
+            attackmap.classify({"category": "web_watch", "message": "Webアクセス異常: 攻撃ペイロードを含むリクエスト ip=185.220.101.4 件数=1 期間=300秒 種別=SQLi"}),
+            ("185.220.101.4", "web"))
+
     def test_normal_logins_lan_and_other_categories_are_ignored(self):
         self.assertIsNone(attackmap.classify({"category": "auth_watch", "message": "ログイン成功: user=hit from=203.0.113.9 method=publickey"}))
         self.assertIsNone(attackmap.classify({"category": "auth_watch", "message": "存在しないユーザーへのログイン試行: user=a from=192.168.0.118"}))
