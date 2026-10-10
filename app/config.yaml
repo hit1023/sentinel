@@ -61,6 +61,10 @@ auth_watch:
   compromise_detection: true
   compromise_window_seconds: 3600
   compromise_min_failures: 5
+  # ログイン後の権限昇格・永続化の兆候を通知する: 新規ユーザー作成・特権グループ(sudo等)への追加は
+  # CRITICAL、suでrootへの切り替え・sudoの失敗・パスワード変更はWARNING。
+  # auth.logのファイル方式でのみ有効（journalctl方式はsshのログだけを読むため対象外）
+  privilege_events: true
 
 # --- Webアクセスログ監視 ---
 # ホストごとにログの場所が異なるため既定はOFF。
@@ -86,6 +90,18 @@ web_watch:
   # 正規にPHP等のスクリプトを配信するホスト名（スクリプト探索・成功応答の検知から除外）
   script_hosts: []
 
+# --- 秘密情報の混入検知 ---
+# 指定した場所のgitリポジトリ（そのもの、または直下のリポジトリ）を定期的に走査し、APIキー・トークン・
+# 秘密鍵・パスワード付きURLが**新しく**混入したら通知する（作業ツリーとgit履歴の両方）。
+# .envや秘密鍵が他ユーザーから読める権限でないかも見る。値そのものは通知に含めない。
+# 既定は無効（リポジトリの場所はホストごとに違うため）。ホストごとに有効化する。
+secret_watch:
+  enabled: false
+  scan_roots: []            # 例: ["/home/hit/docker"]（実ホスト上のパス。Dockerでは/hostfsが自動で前置される）
+  interval_hours: 24        # 走査の間隔
+  history_interval_hours: 168   # git履歴まで含めた走査の間隔（重いので週1回）
+  check_permissions: true
+
 # --- ファイル整合性監視（簡易AIDE） ---
 integrity_watch:
   enabled: true
@@ -99,6 +115,8 @@ integrity_watch:
     - /home/*/.ssh
     - /etc/nginx
     - /etc/docker
+    # ユーザー別crontab（永続化の定番）。/etc/cron.d・/etc/systemd・/etc/sudoers.d は /etc に含まれる
+    - /var/spool/cron
   # 除外パターン（fnmatch形式、フルパスに対して判定）
   exclude_patterns:
     - "*/etc/mtab"

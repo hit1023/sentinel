@@ -22,6 +22,11 @@
 | `auth_watch.compromise_min_failures` | 5 | 上記の失敗回数の閾値 |
 | `package_watch.enabled` | true | 脆弱性照合用にdpkgのパッケージ一覧をマネージャーへ送る（Ubuntu/Debianのみ） |
 | `package_watch.resend_hours` | 24 | 構成に変化が無くても一覧を再送する間隔（時間） |
+| `auth_watch.privilege_events` | true | 新規ユーザー作成・特権グループ追加(CRITICAL)、su・sudo失敗・パスワード変更(WARNING)を通知（auth.logのファイル方式のみ） |
+| `secret_watch.enabled` / 環境変数`SECRET_WATCH_ROOTS` | false / "" | 秘密情報の混入検知。環境変数にリポジトリの場所（カンマ区切り）を設定すると有効化される |
+| `secret_watch.scan_roots` | [] | 走査するgitリポジトリ（そのもの、または直下にリポジトリを持つディレクトリ） |
+| `secret_watch.interval_hours` / `history_interval_hours` | 24 / 168 | 走査間隔 / git履歴まで含めた走査の間隔（時間） |
+| `secret_watch.check_permissions` | true | `.env`・秘密鍵が他のユーザーから読める権限でないかも見る |
 | `web_watch.enabled` / `WEB_LOG_PATHS` | false / "" | Webログ監視。Docker版はホストごとの`.env`で`WEB_LOG_PATHS`を指定すると有効化 |
 | `web_watch.window_seconds` / `scan_distinct_paths` / `auth_failures` / `not_found_distinct_paths` | 300 / 5 / 10 / 30 | Web探索・認証失敗・404探索の判定閾値 |
 | `web_watch.script_probe_paths` | 4 | スクリプト(.php/.jsp等)を異なるパスで要求した数がこれ以上でWARNING |

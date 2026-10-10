@@ -98,7 +98,8 @@ def classify(record: dict) -> tuple[str, str] | None:
     return ip, kind
 
 
-def build_hud(records: list[dict], critical_1h: int, hosts: list[dict], kev_open: int, now: float | None = None) -> dict:
+def build_hud(records: list[dict], critical_1h: int, hosts: list[dict], kev_open: int, now: float | None = None,
+              exposure: dict | None = None) -> dict:
     """HUD（目で即座に状況を把握するための要約）。records: 直近24時間の攻撃系アラート。
     脅威レベル: RED = 直近6時間に防げなかった攻撃(不審ログイン成功/Web成功応答/不審な外向き通信)
     または直近1時間にCRITICAL / AMBER = オフライン・KEV入り脆弱性・24時間内のCRITICALあり / GREEN = それ以外"""
@@ -130,9 +131,14 @@ def build_hud(records: list[dict], critical_1h: int, hosts: list[dict], kev_open
         if kev_open:
             level = "amber"
             reasons.append(f"悪用確認済み(KEV)の脆弱性 {kev_open}件が未解消")
+        if exposure and exposure.get("risky"):
+            level = "amber"
+            reasons.append(f"リスクの高いポートが公開中: {','.join(map(str, exposure['risky'][:4]))}")
     return {
         "level": level, "reasons": reasons, "attacks_24h": attacks, "breaches_6h": breaches_6h,
         "critical_1h": critical_1h, "hosts_online": online, "hosts_total": len(hosts), "kev_open": kev_open,
+        "exposed_ports": exposure["ports"] if exposure else None,
+        "exposed_risky": len(exposure["risky"]) if exposure else 0,
     }
 
 

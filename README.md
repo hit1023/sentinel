@@ -73,6 +73,9 @@
 | 認証ログ（`auth_watch`） | SSHのログイン失敗・成功 | ブルートフォース、root等への試行、見慣れない国からのログイン、**侵入成功の相関検知** |
 | ファイル整合性（`integrity_watch`） | 重要ファイルのSHA-256 | `/etc`の改ざん、`authorized_keys`の変更（即CRITICAL） |
 | プロセス/ネットワーク（`procnet_watch`） | 未知プロセス・未登録LISTENポート・高CPU | バックドアのポート開放、マイナー |
+| 権限昇格・永続化（`auth_watch`） | `auth.log` の useradd/usermod/su/sudo/passwd | **新規ユーザー作成・sudo権限の付与（CRITICAL）**、su・sudo失敗・パスワード変更 |
+| **秘密情報の混入**（`secret_watch`） | gitリポジトリ（作業ツリー＋履歴）、`.env`・鍵の権限 | APIキー・秘密鍵・パスワード付きURLの新規混入（値は通知に含めない） |
+| **公開面の監視**（マネージャー側） | 公開IPのポート（外部観測 Shodan InternetDB） | 新しく開いたポート、DB・管理画面などのリスクの高いポート、公開サービスの既知の脆弱性 |
 | 外向き通信（`outbound_watch`） | LAN外への確立済み接続 | C2通信・情報持ち出し（攻撃ツール既定ポートは即CRITICAL）。地図の **OUT** にも描画 |
 | Webアクセスログ（`web_watch`） | Nginx/NPMのアクセスログ（ホストごとに有効化） | 管理パス探索、認証失敗の連発、パストラバーサル、**攻撃ペイロード、既知スキャナ、Webシェル探索、機密パスへの成功応答(CRITICAL)** |
 | 脆弱性照合（`package_watch` + マネージャー） | インストール済みdpkgパッケージ × OSV.dev / CISA KEV | 悪用確認済み(KEV)脆弱性の検知と対応ガイド |
@@ -118,10 +121,11 @@
 日本で相次ぐ情報漏洩は、取引先・委託先などの**サプライチェーン経由**の侵入、**AIを使った自動探索**、**認証情報の流出**が目立つ。
 SENTINELは「ホストへの侵入」と「Webへの攻撃」の検知に強いが、次の点は別に点検する。
 
-- **秘密情報の混入**: リポジトリ（git履歴を含む）に残ったAPIキー・秘密鍵 → 付属の **`tools/secret_scan.py`** で走査（外部ツール不要、値は出力しない）
-- **外から見た公開面**: 公開IPで想定外のポートが開いていないか（InternetDB等の外部観測）
-- **取引先・外部サービス・依存パッケージ**: アカウントの監査ログ、依存の脆弱性
-- **AIエージェントに預けた権限**: プロンプトインジェクションと、権限の最小化
+- ✅ **秘密情報の混入**: `secret_watch` が、リポジトリ（git履歴を含む）への新規混入と、`.env`・鍵の読み取り権限を検知（外部ツール不要、値は通知に含めない）。単発の走査は `tools/secret_scan.py`
+- ✅ **外から見た公開面**: `exposure_watch` が、公開IPの新しく開いたポート・リスクの高いポート・既知の脆弱性を外部観測で検知
+- ✅ **侵入後の足場づくり**: 新規ユーザー作成・特権グループ追加・su・sudo失敗を検知
+- ⬜ **取引先・外部サービス・依存パッケージ**: アカウントの監査ログ（GitHub・Cloudflare等）、アプリの依存の脆弱性は、まだ検知していない
+- ⬜ **AIエージェントに預けた権限**: プロンプトインジェクションと権限の最小化は、運用での点検（[チェックリスト](docs/security-checklist.md)）
 
 手順・頻度・見つかったときの対応は [docs/security-checklist.md](docs/security-checklist.md) を参照。
 
@@ -195,6 +199,7 @@ hit-linux-ids/
 │   ├── integrity.py                      # ファイル整合性監視（簡易AIDE）
 │   ├── procnet_watch.py                   # プロセス・ネットワーク異常検知
 │   ├── outbound_watch.py                   # 外向き通信の異常検知
+│   ├── secret_watch.py / secretscan.py      # 秘密情報の混入検知（git履歴を含む）と、その走査ロジック
 │   ├── package_watch.py                    # 脆弱性照合用のパッケージ一覧(dpkg)収集
 │   ├── notify.py                            # アラート発火の中枢（AIトリアージ→マネージャー送信→
 │   │                                          ローカルログ→Webhook）
@@ -206,12 +211,12 @@ hit-linux-ids/
 │
 ├── webui/                         # マネージャー（別イメージ）
 │   ├── main.py                      # FastAPI本体。ingest・API・メール/Slack通知・死活監視・WebSocket
-│   ├── vuln.py / attackmap.py        # 脆弱性照合(OSV.dev×KEV)、ATTACK MAPのデータ生成
+│   ├── vuln.py / attackmap.py / exposure.py   # 脆弱性照合(OSV.dev×KEV)、ATTACK MAPのデータ生成、公開面の監視
 │   ├── Dockerfile / requirements.txt
 │   └── static/                       # index.html / style.css / app.js / netbg.js
 │
 ├── packaging/                     # ネイティブ常駐用の定義（systemd unit / launchd plist）
-├── tools/                         # 点検ツール（secret_scan.py: リポジトリ内の秘密情報の走査）
+├── tools/                         # 点検ツール（secret_scan.py: 秘密情報の単発走査。ロジックは app/secretscan.py と共有）
 ├── lab/                           # Sentinel Lab（模擬Webサーバー、検知の動作確認用）
 ├── tests/                         # ユニットテスト
 └── docs/                          # 詳細ドキュメントと画像
@@ -230,8 +235,8 @@ python3 -m unittest discover -s tests -v
 
 ## 今後の拡張候補
 
+- GitHub・Cloudflare・AWSなど外部アカウントの監査ログ取得（不審なサインイン・トークン作成）、アプリの依存パッケージ（npm・PyPI）の脆弱性照合。
 - 脆弱性照合のmacOS対応（OSVはHomebrew非対応のため、別ソースが必要）と、snapパッケージ・稼働中カーネルの区別。
-- `sudo`/`su`・新規ユーザー作成・cron/systemd unit追加など、ログイン後の権限昇格と永続化の検知。
 - アラートログをマネージャー側に常に残す前提の改ざん耐性の強化（ホスト侵害時もログを信頼できるように）。
 - Windows向けエージェントの実装（現状はLinux/macOSのみ対応）。
 - Dockerコンテナ自体の異常（想定外イメージの起動等）を`docker.sock`経由で監視する拡張。

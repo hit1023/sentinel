@@ -25,6 +25,9 @@ services:
       # Comma-separated absolute host paths/globs to Nginx/NPM access logs.
       # Presence of this setting enables web_watch on this host.
       - WEB_LOG_PATHS=${WEB_LOG_PATHS:-}
+      # Comma-separated absolute host paths to git repositories (or directories containing them).
+      # Presence of this setting enables secret_watch (secret leak detection) on this host.
+      - SECRET_WATCH_ROOTS=${SECRET_WATCH_ROOTS:-}
       # config.yaml自体はコード共通化のため実パス表記(/etc等)で書かれているので、
       # Docker運用時だけ下記プレフィックスを前置してホストの実体を見に行く
       # (ネイティブ運用のsystemd/launchdではこれらは未設定=プレフィックスなしになる)。

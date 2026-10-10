@@ -175,6 +175,9 @@ OFFにしていても、デイリーレポートだけ独立してONにできる
 メンションとして解釈されないようにしている。送信の失敗はアラート取り込みを止めず、
 マネージャーのログに残るだけ。
 
+同じタブには**公開面の監視**の設定もある（仕組みは[検知内容](detection.md#マネージャー側の検知-公開面の監視exposure_watch)参照）:
+有効/無効、監視する公開IP（空なら自動検出）、公開されてはいけないポート、「今すぐ確認」、直近の観測結果。
+
 同じタブの下半分は**エージェント死活監視**の設定
 （仕組みは[検知内容](detection.md#マネージャー側の検知-エージェント死活監視ハートビート)参照）:
 
@@ -222,6 +225,7 @@ OFFにしていても、デイリーレポートだけ独立してONにできる
 | `POST /api/vulns/ai-advice` | 対応ガイドの日本語AI解説（押下時のみ生成、キャッシュ） |
 | `GET/POST /api/slack-settings` | Slack通知の有効/無効・Webhook URL・重大度・メンションの取得・保存（URLはマスク表示） |
 | `POST /api/slack-settings/test` | Slackへの即時テスト送信 |
+| `GET/POST /api/exposure-settings` / `POST /api/exposure-settings/run` | 公開面の監視（有効/無効・公開IP・リスクの高いポート）と、今すぐ確認 |
 | `GET/POST /api/heartbeat-settings` | 死活監視の有効/無効・猶予秒数・重大度・除外ホストの取得・保存 |
 | `GET/POST /api/notify-settings` / `POST /api/notify-settings/test` | メール通知（SMTP/Webhook）の取得・保存・テスト送信 |
 | `GET/POST /api/ssh-whitelist` / `DELETE /api/ssh-whitelist/{id}` | SSH許可リスト |

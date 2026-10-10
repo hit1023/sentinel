@@ -737,6 +737,7 @@ document.getElementById("openSettingsBtn")?.addEventListener("click", () => {
   loadDailyReportSettings();
   loadSlackSettings();
   loadHeartbeatSettings();
+  loadExposureSettings();
   loadReleases();
 });
 
@@ -1005,6 +1006,46 @@ document.getElementById("saveHeartbeatBtn")?.addEventListener("click", async () 
     flashStatus("heartbeatStatus", "保存しました");
   } catch (e) {
     flashStatus("heartbeatStatus", `失敗: ${e.message}`, 5000);
+  }
+});
+
+async function loadExposureSettings() {
+  try {
+    const d = await (await fetch("/api/exposure-settings")).json();
+    document.getElementById("exposureEnabled").checked = !!d.enabled;
+    document.getElementById("exposureIps").value = (d.ips || []).join(", ");
+    document.getElementById("exposureRiskyPorts").value = d.risky_ports || "";
+    const obs = Object.entries(d.observed || {}).map(([ip, v]) =>
+      `${ip}: 公開ポート ${(v.ports || []).join(", ") || "なし"}${(v.vulns || []).length ? ` / 既知の脆弱性 ${v.vulns.length}件` : ""}`);
+    const last = d.last_run ? new Date(d.last_run * 1000).toLocaleString("ja-JP") : "未実行";
+    document.getElementById("exposureObserved").textContent = (obs.length ? obs.join("\n") + "\n" : "") + `最終確認: ${last}`;
+  } catch (e) {
+    console.error("公開面監視の設定取得に失敗", e);
+  }
+}
+
+document.getElementById("saveExposureBtn")?.addEventListener("click", async () => {
+  try {
+    await postJson("/api/exposure-settings", {
+      enabled: document.getElementById("exposureEnabled").checked,
+      ips: document.getElementById("exposureIps").value,
+      risky_ports: document.getElementById("exposureRiskyPorts").value,
+    });
+    flashStatus("exposureStatus", "保存しました");
+    loadExposureSettings();
+  } catch (e) {
+    flashStatus("exposureStatus", `失敗: ${e.message}`, 5000);
+  }
+});
+
+document.getElementById("runExposureBtn")?.addEventListener("click", async () => {
+  flashStatus("exposureStatus", "確認中…", 20000);
+  try {
+    const r = await postJson("/api/exposure-settings/run");
+    flashStatus("exposureStatus", r.alerts.length ? `${r.alerts.length}件の通知を出しました` : "変化はありません", 5000);
+    loadExposureSettings();
+  } catch (e) {
+    flashStatus("exposureStatus", `失敗: ${e.message}`, 5000);
   }
 });
 

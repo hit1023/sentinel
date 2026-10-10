@@ -200,6 +200,26 @@
             <span class="mini-btn" id="saveHeartbeatBtn">保存</span>
             <span class="mono-dim" id="heartbeatStatus"></span>
           </div>
+
+          <p class="mono-dim" style="margin:20px 0 0; font-size:11px; border-top:1px solid var(--border); padding-top:14px;">— 🌐 公開面の監視 —</p>
+          <p class="mono-dim" style="margin:6px 0 12px; font-size:11px;">
+            インターネットから見えている公開IPのポートを、外部の観測データ（Shodan InternetDB、認証不要）で定期的に確認し、
+            <strong>新しく開いたポート</strong>、リスクの高いポート（DB・管理画面・リモートデスクトップ等）の公開、公開サービスの既知の脆弱性を通知します。
+            ルーターのポート開放ミスなど、ホストの内側からは見えない変化に気づけます。初回は現状を基準として記録します。
+          </p>
+          <label class="settings-check">
+            <input type="checkbox" id="exposureEnabled"> 公開面の監視を有効にする
+          </label>
+          <label class="settings-label">監視する公開IP（カンマ区切り。空ならこのサーバーの外向きIPを自動検出）</label>
+          <input type="text" id="exposureIps" placeholder="例: 203.0.113.10">
+          <label class="settings-label">公開されてはいけないポート（これが見えたらCRITICAL）</label>
+          <input type="text" id="exposureRiskyPorts">
+          <div class="settings-actions">
+            <span class="mini-btn" id="saveExposureBtn">保存</span>
+            <span class="mini-btn" id="runExposureBtn">今すぐ確認</span>
+            <span class="mono-dim" id="exposureStatus"></span>
+          </div>
+          <div class="mono-dim" id="exposureObserved" style="font-size:11px; margin-top:6px; white-space:pre-line;"></div>
         </div>
       </div>
 

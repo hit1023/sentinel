@@ -418,6 +418,7 @@
       + row("CRITICAL 1H", hud.critical_1h, hud.critical_1h > 0)
       + row("HOSTS", `${hud.hosts_online}/${hud.hosts_total}`, hud.hosts_online < hud.hosts_total)
       + row("KEV脆弱性", hud.kev_open, hud.kev_open > 0)
+      + (hud.exposed_ports ? row("公開ポート", hud.exposed_ports.length, hud.exposed_risky > 0) : "")
       + "</div>";
   }
 

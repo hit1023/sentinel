@@ -10,6 +10,7 @@ from notify import Notifier
 from outbound_watch import OutboundWatcher
 from package_watch import PackageWatcher
 from procnet_watch import ProcNetWatcher
+from secret_watch import SecretWatcher
 from status_writer import report_status
 from updater import UpdateChecker
 from version import get_version
@@ -52,6 +53,9 @@ def main():
     # セクションが無くても有効扱いにする（無効化したい場合だけ enabled: false を書く）
     if config.get("package_watch", {}).get("enabled", True):
         watchers.append(PackageWatcher(config.get("package_watch", {}), notifier, central_config))
+
+    if config.get("secret_watch", {}).get("enabled", False) or os.environ.get("SECRET_WATCH_ROOTS"):
+        watchers.append(SecretWatcher(config.get("secret_watch", {}), notifier))
 
     updater = UpdateChecker(config.get("updater", {}), notifier)
 

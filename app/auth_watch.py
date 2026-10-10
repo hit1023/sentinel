@@ -17,6 +17,26 @@ ACCEPTED_RE = re.compile(
 )
 INVALID_USER_RE = re.compile(r"Invalid user (?P<user>\S+) from (?P<ip>[0-9a-fA-F:.]+)")
 
+# --- ログイン後の権限昇格・永続化の兆候（auth.logのファイル方式で有効。journalctl方式はsshのみ） ---
+# syslogの行頭（日時 ホスト名）の直後に来るプロセス名。攻撃者が制御できるユーザー名等の文字列に
+# 「useradd: new user: …」のような偽の行を混ぜられても、プロセス名の位置でしか反応しないようにする
+SYSLOG_PROC_RE = re.compile(r"^(?:\w{3}\s+\d+\s+[\d:]+|\d{4}-\d\d-\d\dT\S+)\s+\S+\s+(?P<proc>[\w.-]+)(?:\[\d+\])?:")
+PRIV_PROCS = {"useradd", "usermod", "gpasswd", "adduser", "su", "sudo", "passwd"}
+NEW_USER_RE = re.compile(r"useradd(?:\[\d+\])?: new user: name=(?P<user>[^,\s]+)")
+PRIV_GROUPS = "sudo|admin|wheel|root|adm|docker|lxd|shadow"
+GROUP_ADD_RE = re.compile(
+    rf"(?:usermod|gpasswd|useradd|adduser)(?:\[\d+\])?: .*?(?:add|added) '?(?P<user>[^'\s]+)'? to (?:shadow )?group '?(?P<group>{PRIV_GROUPS})\b",
+    re.I,
+)
+# gpasswd / adduser の形式（Ubuntu: "gpasswd: user bob added by root to group sudo"）
+GROUP_ADD2_RE = re.compile(
+    rf"user (?P<u1>\S+) added by \S+ to group (?P<g1>{PRIV_GROUPS})\b|Adding user [`'](?P<u2>[^'`\s]+)['`] to group [`'](?P<g2>{PRIV_GROUPS})['`]",
+    re.I,
+)
+SU_ROOT_RE = re.compile(r"su(?:\[\d+\])?: \(to root\) (?P<user>\S+) on|pam_unix\(su(?:-l)?:session\): session opened for user root by (?P<user2>\S+?)\(")
+SUDO_FAIL_RE = re.compile(r": (?:user )?(?P<what>NOT in sudoers|\d+ incorrect password attempts?) ;")
+PASSWD_CHANGE_RE = re.compile(r"passwd(?:\[\d+\])?: pam_unix\(passwd:chauthtok\): password changed for (?P<user>\S+)")
+
 STATE_PATH = os.path.join(paths.data_dir(), "auth_watch_state.json")
 
 
@@ -35,6 +55,8 @@ class AuthWatcher:
         self.compromise_enabled = config.get("compromise_detection", True)
         self.compromise_window = config.get("compromise_window_seconds", 3600)
         self.compromise_min_failures = config.get("compromise_min_failures", 5)
+        # 新規ユーザー作成・sudo権限の付与・su・sudo失敗・パスワード変更（侵入後の足場づくり）
+        self.privilege_events = config.get("privilege_events", True)
         # ip -> deque[timestamp]
         self._fail_events = defaultdict(deque)
         self._state = self._load_state()
@@ -190,8 +212,45 @@ class AuthWatcher:
         except (OSError, subprocess.SubprocessError):
             pass
 
+    def _check_privilege(self, line) -> bool:
+        """ログイン後の権限昇格・永続化の兆候を通知する。該当したらTrue。"""
+        if not self.privilege_events:
+            return False
+        head = SYSLOG_PROC_RE.match(line)
+        if not head or head.group("proc") not in PRIV_PROCS:
+            return False
+        m = NEW_USER_RE.search(line)
+        if m:
+            self.notifier.alert("auth_watch", f"新規ユーザーが作成されました: user={m.group('user')}（侵入後のバックドア作成の可能性）", "critical", allow_ai_dismiss=False)
+            return True
+        m = GROUP_ADD_RE.search(line)
+        if m:
+            self.notifier.alert("auth_watch", f"特権グループへユーザーが追加されました: user={m.group('user')} group={m.group('group')}", "critical", allow_ai_dismiss=False)
+            return True
+        m = GROUP_ADD2_RE.search(line)
+        if m:
+            user, group = (m.group("u1"), m.group("g1")) if m.group("u1") else (m.group("u2"), m.group("g2"))
+            self.notifier.alert("auth_watch", f"特権グループへユーザーが追加されました: user={user} group={group}", "critical", allow_ai_dismiss=False)
+            return True
+        m = SU_ROOT_RE.search(line)
+        if m:
+            who = m.group("user") or m.group("user2")
+            self.notifier.alert("auth_watch", f"suでrootに切り替えられました: by={who}", "warning")
+            return True
+        m = SUDO_FAIL_RE.search(line)
+        if m:
+            self.notifier.alert("auth_watch", f"sudoの失敗: {m.group('what')}", "warning")
+            return True
+        m = PASSWD_CHANGE_RE.search(line)
+        if m:
+            self.notifier.alert("auth_watch", f"パスワードが変更されました: user={m.group('user')}", "warning")
+            return True
+        return False
+
     def _process_line(self, line):
         now = time.time()
+        if self._check_privilege(line):
+            return
 
         m = FAILED_RE.search(line)
         if m:

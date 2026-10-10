@@ -19,6 +19,7 @@ from fastapi import BackgroundTasks, FastAPI, Header, HTTPException, WebSocket, 
 from fastapi.staticfiles import StaticFiles
 
 import attackmap
+import exposure
 import vuln
 
 # コンテナはTZ設定に関わらずUTCで動くことが多いため、表示・保存する時刻は
@@ -144,6 +145,13 @@ NOTIFY_SETTINGS_DEFAULTS = {
     "heartbeat_grace_seconds": "300",
     "heartbeat_severity": "warning",  # 途絶時の重大度（warning / critical）
     "heartbeat_ignore_hosts": "",  # カンマ区切り。計画停止するホスト等を除外
+    # --- 公開面の監視（外部観測） ---
+    "exposure_enabled": "false",
+    "exposure_ips": "",  # 空なら、このマネージャーの外向きIP（=公開IP）を自動検出
+    "exposure_risky_ports": exposure.DEFAULT_RISKY_PORTS,
+    "exposure_interval_hours": "12",
+    "exposure_state": "",
+    "exposure_last_run": "0",
 }
 
 
@@ -717,6 +725,7 @@ def _emit_internal_alert(category: str, message: str, severity: str, host: str):
 
 vuln_scanner = vuln.VulnScanner(_db_connect, _emit_internal_alert, _get_app_setting, _set_app_setting)
 attack_map = attackmap.AttackMap(_db_connect)
+exposure_watch = exposure.ExposureWatcher(_get_app_setting, _set_app_setting, _emit_internal_alert)
 
 
 @app.post("/api/ingest/alert")
@@ -1070,6 +1079,45 @@ async def _heartbeat_loop():
             print(f"[heartbeat] 監視ループでエラー: {e}")
 
 
+@app.get("/api/exposure-settings")
+def api_get_exposure_settings():
+    st = exposure_watch.settings()
+    return {**st, "last_run": float(_get_app_setting("exposure_last_run") or 0), "observed": exposure_watch.state()}
+
+
+@app.post("/api/exposure-settings")
+async def api_set_exposure_settings(payload: dict):
+    if "enabled" in payload:
+        _set_app_setting("exposure_enabled", "true" if payload["enabled"] else "false")
+    if "ips" in payload:
+        ips = [i.strip() for i in str(payload["ips"] or "").replace("、", ",").split(",") if i.strip()]
+        for ip in ips:
+            try:
+                ipaddress.ip_address(ip)
+            except ValueError:
+                raise HTTPException(status_code=400, detail=f"IPアドレスが不正です: {ip}")
+        _set_app_setting("exposure_ips", ",".join(ips))
+    if "risky_ports" in payload:
+        _set_app_setting("exposure_risky_ports", str(payload["risky_ports"] or exposure.DEFAULT_RISKY_PORTS).strip())
+    return {"ok": True, "settings": api_get_exposure_settings()}
+
+
+@app.post("/api/exposure-settings/run")
+async def api_run_exposure_now():
+    """設定タブの「今すぐ確認」。有効/無効に関わらず1回観測して差分を通知する。"""
+    sent = await asyncio.to_thread(exposure_watch.run, True)
+    return {"ok": True, "alerts": [{"severity": s, "message": m} for s, m in sent], "settings": api_get_exposure_settings()}
+
+
+async def _exposure_loop():
+    while True:
+        await asyncio.sleep(900)
+        try:
+            await asyncio.to_thread(exposure_watch.run)
+        except Exception as e:
+            print(f"[exposure] 監視ループでエラー: {e}")
+
+
 @app.get("/api/heartbeat-settings")
 def api_get_heartbeat_settings():
     return _get_heartbeat_settings()
@@ -1369,7 +1417,11 @@ def _attack_hud(hours: float = 24) -> dict:
     for host, info in _read_hosts_status().items():
         last_seen = info.get("received_at") or info.get("updated_at") or 0
         hosts.append({"host": host, "online": (now - last_seen) <= HOST_STALE_SECONDS})
-    return attackmap.build_hud(recs, critical_1h, hosts, _kev_cache["n"], now)
+    observed = exposure_watch.state()
+    risky = exposure._parse_ports(exposure_watch.settings()["risky_ports"])
+    open_ports = sorted({p for v in observed.values() for p in v.get("ports", [])})
+    exp = {"ports": open_ports, "risky": [p for p in open_ports if p in risky]} if observed else None
+    return attackmap.build_hud(recs, critical_1h, hosts, _kev_cache["n"], now, exposure=exp)
 
 
 @app.get("/api/stats")
@@ -1543,6 +1595,7 @@ async def _on_startup():
     asyncio.create_task(_daily_report_scheduler_loop())
     asyncio.create_task(_vuln_scheduler_loop())
     asyncio.create_task(_heartbeat_loop())
+    asyncio.create_task(_exposure_loop())
 
 
 app.mount("/", StaticFiles(directory=os.path.join(os.path.dirname(__file__), "static"), html=True), name="static")
