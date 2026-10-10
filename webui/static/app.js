@@ -59,6 +59,10 @@ function buildAlertElement(a) {
   // auth_watchのアラートでIPが抽出できる場合、そのIP/ドメインをワンクリックで
   // SSH許可リストへ登録できるボタンを出す（見慣れないロケーション判定の即時鎮静用）
   const detected = a.category === "auth_watch" && !a.suppressed ? extractAuthSource(a.message) : null;
+  // 対応ガイド: 何をすればよいかを、標準の手順書とAIの解説で示す（作業は人間が行う）
+  const guideBtn = ["critical", "warning"].includes((a.severity || "").toLowerCase()) && a.id
+    ? `<span class="suppress-btn guide-btn" title="このアラートへの対応手順を見る">🧭 対応</span>`
+    : "";
   const whitelistBtn = detected
     ? `<span class="suppress-btn whitelist-quick-btn" title="このIP/ドメインをSSH許可リストに追加">✓ 許可リストへ</span>`
     : "";
@@ -72,6 +76,7 @@ function buildAlertElement(a) {
     suppressedBadge +
     `<span class="msg">${escapeHtml(a.message || "")}</span>` +
     `<div class="spacer"></div>` +
+    guideBtn +
     whitelistBtn +
     suppressBtn +
     `</div>` +
@@ -79,8 +84,14 @@ function buildAlertElement(a) {
   if (a.ai_dismissed || a.suppressed) {
     div.classList.add("dismissed");
   }
+  if (guideBtn) {
+    div.querySelector(".guide-btn").addEventListener("click", (e) => {
+      e.stopPropagation();
+      openAlertGuide(a.id);
+    });
+  }
   if (canSuppress) {
-    div.querySelector(".suppress-btn:not(.whitelist-quick-btn)").addEventListener("click", (e) => {
+    div.querySelector(".suppress-btn:not(.whitelist-quick-btn):not(.guide-btn)").addEventListener("click", (e) => {
       e.stopPropagation();
       openSuppressPrompt(a);
     });
@@ -93,6 +104,88 @@ function buildAlertElement(a) {
   }
   return div;
 }
+
+async function openAlertGuide(alertId) {
+  const overlay = document.getElementById("guideOverlay");
+  const body = document.getElementById("guideModalBody");
+  body.innerHTML = '<div class="mono-dim">読み込み中…</div>';
+  overlay.style.display = "flex";
+  let d;
+  try {
+    const res = await fetch(`/api/alerts/${encodeURIComponent(alertId)}/guide`);
+    if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || res.status);
+    d = await res.json();
+  } catch (err) {
+    body.innerHTML = `<div class="mono-dim">対応ガイドを取得できませんでした: ${escapeHtml(String(err.message || err))}</div>`;
+    return;
+  }
+  const pb = d.playbook;
+  const urgencyClass = { "今すぐ": "p-high", "今日中": "p-mid" }[pb.urgency] || "p-low";
+  document.getElementById("guideModalTitle").textContent = `対応ガイド — ${pb.title}`;
+  body.innerHTML = `
+    <div class="vg-badges">
+      <span class="vuln-pill ${urgencyClass}">${escapeHtml(pb.urgency)}</span>
+      <span class="mono-dim">${escapeHtml(d.alert.host || "")} / ${escapeHtml(d.alert.category || "")} / ${escapeHtml((d.alert.severity || "").toUpperCase())}</span>
+    </div>
+    <div class="vg-section"><div class="vg-text">${escapeHtml(pb.summary)}</div></div>
+
+    <div class="vg-section">
+      <h4>やること（作業は人間が行います）</h4>
+      <ol class="vg-steps">
+        ${pb.steps.map((s) => s.text.startsWith("【")
+          ? `<li class="vg-subhead">${escapeHtml(s.text)}</li>`
+          : `<li>${renderGuideText(s.text)}${s.command ? cmdBlock(s.command) : ""}</li>`).join("")}
+      </ol>
+    </div>
+    ${pb.verify.length ? `<div class="vg-section"><h4>対応できたかの確認</h4><ul class="vg-notes">${pb.verify.map((v) => `<li>${renderGuideText(v)}</li>`).join("")}</ul></div>` : ""}
+    ${pb.prevent.length ? `<div class="vg-section"><h4>再発防止</h4><ul class="vg-notes">${pb.prevent.map((v) => `<li>${renderGuideText(v)}</li>`).join("")}</ul></div>` : ""}
+
+    <div class="vg-section vg-ai">
+      <h4>AIによる状況の説明（日本語）</h4>
+      <div class="vg-text" id="guideAiText">${d.ai_advice ? escapeHtml(d.ai_advice.text) : ""}</div>
+      ${d.ai_advice ? "" : (d.ai_available
+        ? '<span class="mini-btn" id="guideAiBtn">AIに状況を説明してもらう</span> <span class="mono-dim" style="font-size:11px;">押したときだけAIを呼び、結果は保存されます。AIは助言のみで、何も実行しません</span>'
+        : '<span class="mono-dim" style="font-size:11px;">AI Gatewayが未設定のため、標準の手順書のみ表示しています</span>')}
+    </div>
+    <div class="mono-dim" style="font-size:11px;">コマンドは内容を確認してから、自分で実行してください。<code>&lt;…&gt;</code> は状況に合わせて置き換える部分です。</div>
+  `;
+  document.getElementById("guideAiBtn")?.addEventListener("click", async (ev) => {
+    const btn = ev.currentTarget;
+    btn.textContent = "説明を生成中…";
+    try {
+      const res = await fetch(`/api/alerts/${encodeURIComponent(alertId)}/guide/ai`, { method: "POST" });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || res.status);
+      document.getElementById("guideAiText").textContent = data.text;
+      btn.remove();
+    } catch (err) {
+      btn.textContent = "失敗しました（再試行）";
+      document.getElementById("guideAiText").textContent = String(err.message || err);
+    }
+  });
+}
+
+// **強調** だけを太字にする（他のHTMLは一切通さない）
+function renderGuideText(text) {
+  return escapeHtml(text).replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
+}
+
+document.getElementById("closeGuideModalBtn")?.addEventListener("click", () => {
+  document.getElementById("guideOverlay").style.display = "none";
+});
+document.getElementById("guideOverlay")?.addEventListener("click", (ev) => {
+  if (ev.target.id === "guideOverlay") ev.currentTarget.style.display = "none";
+});
+document.getElementById("guideModalBody")?.addEventListener("click", async (ev) => {
+  const btn = ev.target.closest(".vg-copy");
+  if (!btn) return;
+  try {
+    await navigator.clipboard.writeText(btn.dataset.cmd);
+    btn.textContent = "コピー済";
+  } catch {
+    btn.textContent = "コピー不可";
+  }
+});
 
 function extractAuthSource(message) {
   message = message || "";
