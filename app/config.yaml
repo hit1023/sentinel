@@ -75,6 +75,16 @@ web_watch:
   auth_failures: 10
   not_found_distinct_paths: 30
   alert_cooldown_seconds: 900
+  # 攻撃ペイロード（SQLi/XSS/Log4Shell/RCE/LFI）・既知スキャナ・スクリプト探索の検知。
+  # 同一クライアントがスクリプト(.php/.jsp等)を要求した異なるパスの数がこれ以上で警告
+  script_probe_paths: 4
+  # LAN内(プライベートIP)のクライアントは上記の新しい検知の対象外にする
+  ignore_private_ips: true
+  # 他のパスには404を返すサイトで、機密パス(.env/.git等)やスクリプトのパスに2xxが返ったら
+  # 「攻撃が通った可能性」としてCRITICAL通知する（SPAのようにどのパスにも200を返すサイトは対象外）
+  success_critical: true
+  # 正規にPHP等のスクリプトを配信するホスト名（スクリプト探索・成功応答の検知から除外）
+  script_hosts: []
 
 # --- ファイル整合性監視（簡易AIDE） ---
 integrity_watch:

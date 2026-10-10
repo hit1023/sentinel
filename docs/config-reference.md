@@ -24,6 +24,10 @@
 | `package_watch.resend_hours` | 24 | 構成に変化が無くても一覧を再送する間隔（時間） |
 | `web_watch.enabled` / `WEB_LOG_PATHS` | false / "" | Webログ監視。Docker版はホストごとの`.env`で`WEB_LOG_PATHS`を指定すると有効化 |
 | `web_watch.window_seconds` / `scan_distinct_paths` / `auth_failures` / `not_found_distinct_paths` | 300 / 5 / 10 / 30 | Web探索・認証失敗・404探索の判定閾値 |
+| `web_watch.script_probe_paths` | 4 | スクリプト(.php/.jsp等)を異なるパスで要求した数がこれ以上でWARNING |
+| `web_watch.ignore_private_ips` | true | LAN内クライアントを、ペイロード/スキャナ/スクリプト探索/成功応答の検知から除外 |
+| `web_watch.success_critical` | true | 機密パス・スクリプトのパスへの2xx応答（404を返すサイトのみ）をCRITICAL通知 |
+| `web_watch.script_hosts` | [] | 正規にスクリプトを配信するホスト名（スクリプト探索・成功応答から除外） |
 | `integrity_watch.watch_paths` | `/etc`, `/root/.ssh`等 | 整合性監視対象（globパターン可） |
 | `integrity_watch.critical_patterns` | `*/.ssh/*` | 一致パスは新規/削除/改ざんいずれも即CRITICAL |
 | `procnet_watch.known_listen_ports` | （ホストごとに要調整） | 既知ポート一覧 |

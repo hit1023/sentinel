@@ -68,6 +68,21 @@
    - IPはアクセスログに記録された値を使用し、未検証のX-Forwarded-Forは参照しない
    - 初回はファイル末尾から開始。inodeとオフセットを保存して再起動・ログローテーションに対応
    - WebアラートはAIコメントの対象になるが、AIによる自動静音化は行わない
+   - **不審なWebアクセスの検知**（LAN内のクライアントは対象外、`ignore_private_ips`）:
+     - **攻撃ペイロード**: URL（二重エンコードも展開）に SQLi / XSS / Log4Shell(`${jndi:`) /
+       RCE(コマンド注入) / LFI(`/etc/passwd`等) の型が含まれていたらWARNING。アラートには
+       種別名だけを載せ、攻撃者が制御できるURL本体は載せない
+     - **既知の脆弱性スキャナ**: User-Agentが sqlmap / nikto / nuclei / zgrab / wpscan 等ならWARNING
+       （python-requestsやcurlは正規の自動化にも使われるため対象外）
+     - **スクリプト・Webシェルの探索**: `.php` `.jsp` `.asp(x)` `.cgi` 等を異なるパスで
+       `script_probe_paths`（既定4）個以上要求したらWARNING
+     - **成功応答（攻撃が通った可能性）**: `.env` `.git` `.aws` `wp-config.php` `phpinfo.php`
+       `actuator/env` などの機密パス、またはスクリプトのパス**そのもの**に2xxが返ったら
+       **CRITICAL**（Slackにも通知）。他のパスには404を返すサイトでだけ成立する
+       （どのパスにも200を返すSPAでの誤検知を避けるため、ホストごとの404観測を7日間保持）。
+       ペイロードがクエリに入っていただけで200が返ったケースは、アプリがクエリを無視しただけの
+       ことが多い（実例: `/?payload=${jndi:...}` がトップページを返した）ためCRITICALにしない。
+       正規にPHP等を配信するホストは`script_hosts`で除外する
 
 7. **脆弱性照合**（エージェント: `app/package_watch.py` / マネージャー: `webui/vuln.py`）
    - エージェントは`/var/lib/dpkg/status`からインストール済みパッケージを**ソース
