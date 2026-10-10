@@ -199,7 +199,22 @@ echo
 # --- 起動 (LaunchDaemon登録) ---
 # 既に登録済みなら一度解除してから登録し直す（アップデート・再インストール対策）
 launchctl bootout "system/${LABEL}" 2>/dev/null || true
-launchctl bootstrap system "$PLIST_PATH"
+# bootoutは非同期のため、解除の完了前にbootstrapすると「Input/output error」で失敗する。
+# 解除を待ち、それでも失敗したら少し待って再試行する。
+for _ in 1 2 3 4 5 6 7 8 9 10; do
+  launchctl print "system/${LABEL}" >/dev/null 2>&1 || break
+  sleep 1
+done
+registered=false
+for _ in 1 2 3 4 5; do
+  if launchctl bootstrap system "$PLIST_PATH" 2>/dev/null; then registered=true; break; fi
+  sleep 2
+done
+if [ "$registered" != "true" ]; then
+  echo "❌ LaunchDaemonの登録に失敗しました。次を実行して手動で登録してください:" >&2
+  echo "   sudo launchctl bootstrap system $PLIST_PATH" >&2
+  exit 1
+fi
 launchctl enable "system/${LABEL}"
 
 echo
