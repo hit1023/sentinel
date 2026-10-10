@@ -673,12 +673,31 @@ def _check_token(authorization: str | None):
         raise HTTPException(status_code=401, detail="invalid ingest token")
 
 
+def _tail_lines(path: str, limit: int, block: int = 1 << 20):
+    """ファイル末尾からlimit行だけをバイナリで逆方向に読む。
+    アラートのjsonlは数百MBになり得るため、全体をreadlines()してはならない
+    （呼び出しごとにGB単位のメモリを使い、gateが応答不能になった実績がある）。"""
+    with open(path, "rb") as f:
+        f.seek(0, os.SEEK_END)
+        pos = f.tell()
+        buf = b""
+        while pos > 0 and buf.count(b"\n") <= limit:
+            step = min(block, pos)
+            pos -= step
+            f.seek(pos)
+            buf = f.read(step) + buf
+    lines = buf.split(b"\n")
+    if pos > 0:
+        lines = lines[1:]  # 先頭は途中で切れている可能性があるので捨てる
+    lines = [l for l in lines if l.strip()]
+    return [l.decode("utf-8", errors="replace") for l in lines[-limit:]]
+
+
 def _read_alerts(limit: int = 200):
     if not os.path.exists(ALERTS_JSONL):
         return []
     # ファイル末尾からlimit件だけ読む（アラート数が増えても軽量に保つ）
-    with open(ALERTS_JSONL, "r", encoding="utf-8") as f:
-        lines = f.readlines()[-limit:]
+    lines = _tail_lines(ALERTS_JSONL, limit)
     records = []
     for line in lines:
         line = line.strip()
@@ -784,32 +803,27 @@ def _reapply_suppressions_to_existing() -> int:
     再適用手段として用意した（『iwhで除外したい』という要望への対応）。"""
     if not os.path.exists(ALERTS_JSONL):
         return 0
-    with open(ALERTS_JSONL, "r", encoding="utf-8") as f:
-        lines = f.readlines()
-
     updated_ids = []
-    out_lines = []
-    for line in lines:
-        stripped = line.strip()
-        if not stripped:
-            out_lines.append(line)
-            continue
-        try:
-            record = json.loads(stripped)
-        except json.JSONDecodeError:
-            out_lines.append(line)
-            continue
-        if not record.get("suppressed") and not record.get("ai_dismissed"):
-            before = record.get("severity")
-            _apply_ssh_whitelist(record)
-            _apply_suppressions(record)
-            if record.get("severity") != before:
-                updated_ids.append(record.get("id"))
-        out_lines.append(json.dumps(record, ensure_ascii=False) + "\n")
-
     tmp_path = ALERTS_JSONL + ".tmp"
-    with open(tmp_path, "w", encoding="utf-8") as f:
-        f.writelines(out_lines)
+    # 全体をメモリに載せず、1行ずつ読んで書き出す（jsonlは数百MBになる）
+    with open(ALERTS_JSONL, "r", encoding="utf-8") as src, open(tmp_path, "w", encoding="utf-8") as dst:
+        for line in src:
+            stripped = line.strip()
+            if not stripped:
+                dst.write(line)
+                continue
+            try:
+                record = json.loads(stripped)
+            except json.JSONDecodeError:
+                dst.write(line)
+                continue
+            if not record.get("suppressed") and not record.get("ai_dismissed"):
+                before = record.get("severity")
+                _apply_ssh_whitelist(record)
+                _apply_suppressions(record)
+                if record.get("severity") != before:
+                    updated_ids.append(record.get("id"))
+            dst.write(json.dumps(record, ensure_ascii=False) + "\n")
     os.replace(tmp_path, ALERTS_JSONL)
 
     if updated_ids:
