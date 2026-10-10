@@ -21,6 +21,11 @@
   const LIVE_POLL_MS = 5000;
   const FULL_RELOAD_MS = 60000;
 
+  // SSHとWebを分けて見るための表示範囲（ALL / SSH / WEB）。選択はこのブラウザに記憶する
+  let scope = "all";
+  try { scope = localStorage.getItem("attackScope") || "all"; } catch (e) { /* 記憶できなくても動く */ }
+  if (!["all", "ssh", "web"].includes(scope)) scope = "all";
+
   let land = null;
   let projection = null;
   let width = 0;
@@ -422,7 +427,7 @@
   // ---- データ取得 ----
   async function loadFull() {
     try {
-      const res = await fetch("/api/attack-map?hours=24");
+      const res = await fetch(`/api/attack-map?hours=24&scope=${scope}`);
       const fresh = await res.json();
       const first = !data;
       data = fresh;
@@ -443,7 +448,7 @@
   async function pollLive() {
     if (!data) return;
     try {
-      const res = await fetch(`/api/attack-map?since=${lastEpoch}`);
+      const res = await fetch(`/api/attack-map?since=${lastEpoch}&scope=${scope}`);
       const fresh = await res.json();
       const events = fresh.events.filter((e) => e.epoch > lastEpoch);
       if (!events.length) return;
@@ -465,7 +470,29 @@
     }
   }
 
+  function applyScopeUi() {
+    document.querySelectorAll("#attackScope .mini-btn").forEach((b) => b.classList.toggle("active", b.dataset.scope === scope));
+    // 凡例は、選んだ範囲に関係する種類だけ出す
+    document.querySelectorAll(".attack-legend [data-for]").forEach((el) => {
+      el.style.display = scope === "all" || el.dataset.for === scope ? "" : "none";
+    });
+  }
+
+  function setScope(next) {
+    if (next === scope) return;
+    scope = next;
+    try { localStorage.setItem("attackScope", scope); } catch (e) { /* 無視 */ }
+    // 描画中の線・予約・波紋を捨てて、選んだ範囲の24時間分を取り直す
+    arcs.length = 0; impacts.length = 0; sparks.length = 0; shieldHits.length = 0; pending.length = 0;
+    data = null;
+    lastEpoch = 0;
+    applyScopeUi();
+    loadFull();
+  }
+
   async function init() {
+    document.querySelectorAll("#attackScope .mini-btn").forEach((b) => b.addEventListener("click", () => setScope(b.dataset.scope)));
+    applyScopeUi();
     if (typeof d3 === "undefined" || typeof topojson === "undefined") {
       wrap.insertAdjacentHTML("beforeend", '<div class="attack-error mono-dim">地図ライブラリを読み込めませんでした（オフライン？）</div>');
       return;

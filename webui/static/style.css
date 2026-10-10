@@ -961,6 +961,8 @@ body.alert-critical .topbar {
 /* --- ATTACK MAP --- */
 .attack-row { display: block; margin-bottom: 18px; }
 .attack-panel { min-height: 0; }
+.attack-scope { display: inline-flex; gap: 6px; margin-left: auto; margin-right: 12px; }
+.attack-scope .mini-btn.active { background: rgba(0,229,255,0.18); border-color: var(--neon-cyan); color: var(--neon-cyan); }
 .attack-map-wrap {
   position: relative; height: 440px; overflow: hidden; border-radius: 6px;
   background: radial-gradient(ellipse at 60% 40%, rgba(36,240,255,0.06), transparent 70%);

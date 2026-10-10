@@ -1321,16 +1321,18 @@ def api_alerts_history(
 
 
 @app.get("/api/attack-map")
-def api_attack_map(hours: float = 24, since: float | None = None):
+def api_attack_map(hours: float = 24, since: float | None = None, scope: str = "all"):
     """ATTACK MAPパネル用。攻撃系アラート(auth_watch/web_watch、CRITICAL/WARNINGは監査DBに
     全件残っている)から攻撃元IPの位置・集計・直近イベントを返す。
-    since指定時は、その時刻より新しいイベントだけを返す（ライブ描画用の軽量ポーリング）。"""
+    since指定時は、その時刻より新しいイベントだけを返す（ライブ描画用の軽量ポーリング）。
+    scopeでSSH(auth_watch)とWeb(web_watch)を分けて返せる（ssh / web / all）。"""
+    categories = {"ssh": ("auth_watch",), "web": ("web_watch",)}.get(scope, ("auth_watch", "web_watch"))
     start = since if since else time.time() - min(max(hours, 1), 24 * 7) * 3600
     with _db_connect() as conn:
         rows = conn.execute(
-            "SELECT * FROM alerts WHERE category IN ('auth_watch', 'web_watch') AND epoch > ?"
+            f"SELECT * FROM alerts WHERE category IN ({','.join('?' * len(categories))}) AND epoch > ?"
             " ORDER BY epoch ASC",
-            (start,),
+            (*categories, start),
         ).fetchall()
     data = attack_map.build([dict(r) for r in rows])
     if since:

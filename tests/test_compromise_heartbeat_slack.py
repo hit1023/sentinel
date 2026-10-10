@@ -147,6 +147,22 @@ class WebuiTests(unittest.TestCase):
         up = m.check_heartbeats(now=t + 1200)
         self.assertEqual([(r["host"], r["severity"]) for r in up], [("a", "info")])
 
+    def test_attack_map_scope_splits_ssh_and_web(self):
+        m = self.m
+        now = time.time()
+        for i, (cat, msg) in enumerate([
+            ("auth_watch", "ブルートフォースの疑い: 93.184.216.34 から300秒間に5回のログイン失敗"),
+            ("web_watch", "Webアクセス異常: 攻撃ペイロードを含むリクエスト ip=151.101.1.1 件数=1 期間=300秒 種別=SQLi"),
+        ]):
+            m._persist_important({"id": f"scope{i}", "epoch": now - 10 + i, "timestamp": "t", "host": "gate",
+                                  "category": cat, "severity": "warning", "message": msg})
+        with patch.object(m.attack_map, "_geo", lambda ips: {ip: {"lat": 1.0, "lon": 2.0, "country": "X", "country_code": "XX", "city": ""} for ip in ips}):
+            kinds = lambda scope: sorted({e["kind"] for e in m.api_attack_map(hours=1, scope=scope)["events"]})
+            self.assertEqual(kinds("ssh"), ["ssh"])
+            self.assertEqual(kinds("web"), ["web"])
+            self.assertEqual(kinds("all"), ["ssh", "web"])
+            self.assertEqual(kinds("bogus"), ["ssh", "web"])  # 不明な値はALL扱い
+
 
 if __name__ == "__main__":
     unittest.main()
