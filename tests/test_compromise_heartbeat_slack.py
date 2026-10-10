@@ -162,6 +162,9 @@ class WebuiTests(unittest.TestCase):
             self.assertEqual(kinds("web"), ["web"])
             self.assertEqual(kinds("all"), ["ssh", "web"])
             self.assertEqual(kinds("bogus"), ["ssh", "web"])  # 不明な値はALL扱い
+            self.assertEqual(kinds("out"), [])
+            self.assertIn("hud", m.api_attack_map(hours=1, scope="web"))
+            self.assertIn(m.api_attack_map(hours=1)["hud"]["level"], ("green", "amber", "red"))
 
 
 if __name__ == "__main__":

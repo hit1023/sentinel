@@ -54,10 +54,17 @@
 - 攻撃元IPの緯度経度はマネージャーがip-api.comのbatch APIで引き、`geo_cache`テーブルにキャッシュ
   （無料枠のレート制限内に収まるよう、1回の取得で最大300件ずつ解決）
 - 5秒ごとに新着を取得して明るい弧で発射、新着が無い間は直近24時間分を薄くリプレイして常に動かす
+- **HUD（右上）**: 脅威レベルを `SECURE`（緑）/ `CAUTION`（橙）/ `ALERT`（赤）で一目で示し、SSH・WEB・外向き通信の24時間件数、
+  直近6時間の**BREACH**（防げなかった攻撃）、直近1時間のCRITICAL、ホストのオンライン数、悪用確認済み(KEV)脆弱性の件数を並べる。
+  `ALERT` になるのは「直近6時間に防げなかった攻撃（不審ログイン成功・Web成功応答・不審な外向き通信）」または「直近1時間のCRITICAL」、
+  `CAUTION` はホストの応答なし・KEV入り脆弱性の未解消・24時間内のCRITICALがある場合。**シールドと自宅の色もレベルに連動**し、`ALERT` では
+  パネルが赤く脈打つ。表示範囲（ALL/SSH/WEB/OUT）に関係なく、常に全体の状況を示す
+- **外向き通信（OUT）**: 自ホストから攻撃ツールの使うポート等へ出ていった通信（C2・情報持ち出しの疑い）を、**自宅から宛先へ向かう**マゼンタの線で描く
+  （侵入された後の動きなので、シールドでは止まらない）
 - **ガード**: 自宅のまわりにシールド（回転する点線リング）を張り、ログイン失敗・Webスキャン＝失敗に終わった
   攻撃はシールド表面で止まって押し返され、被弾面が光って火花が反射方向に散る。不審ログイン成功は防げて
   いないのでシールドを貫通して自宅に着弾する
-- **ALL / SSH / WEB の切り替え**: パネル右上のボタンで、SSH（`auth_watch`）とWeb（`web_watch`）を分けて表示できる（`GET /api/attack-map?scope=ssh|web|all`）。選択はブラウザに記憶され、凡例・統計・上位国も選んだ範囲だけになる
+- **ALL / SSH / WEB / OUT の切り替え**: パネル右上のボタンで、SSH（`auth_watch`）・Web（`web_watch`）・外向き通信（`outbound_watch`）を分けて表示できる（`GET /api/attack-map?scope=ssh|web|out|all`）。選択はブラウザに記憶され、凡例・統計・上位国も選んだ範囲だけになる
 - 攻撃先の位置は既定で東京。webuiの環境変数`ATTACK_MAP_HOME="緯度,経度,表示名"`で変更可
 - 地図描画にd3-geo/topojson-client/world-atlasをjsDelivrから読み込む（オフライン時は地図のみ非表示）
 
@@ -211,7 +218,7 @@ OFFにしていても、デイリーレポートだけ独立してONにできる
 | `GET /api/vulns?host=` | 脆弱性照合結果（ホスト別サマリー＋一覧、KEV→優先度順） |
 | `POST /api/vulns/rescan` | KEV再ダウンロードを含む全ホストの強制再照合 |
 | `GET /api/vulns/detail?host=&vuln_id=&package=` | 対応ガイド（推奨手順・ホストでの状況・KEV情報・参考リンク） |
-| `GET /api/attack-map?hours=&since=` | ATTACK MAP用。攻撃元IPの位置・国別集計・直近イベント（`since`でライブ差分のみ） |
+| `GET /api/attack-map?hours=&since=&scope=` | ATTACK MAP用。攻撃元IPの位置・国別集計・直近イベントと、HUD用の要約`hud`（`since`指定時はライブ差分のみ。`scope`=ssh/web/out/all） |
 | `POST /api/vulns/ai-advice` | 対応ガイドの日本語AI解説（押下時のみ生成、キャッシュ） |
 | `GET/POST /api/slack-settings` | Slack通知の有効/無効・Webhook URL・重大度・メンションの取得・保存（URLはマスク表示） |
 | `POST /api/slack-settings/test` | Slackへの即時テスト送信 |

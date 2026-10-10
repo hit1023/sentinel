@@ -15,8 +15,8 @@
   const baseCtx = baseCanvas.getContext("2d");
   const fxCtx = fxCanvas.getContext("2d");
 
-  const KIND_COLORS = { ssh: [255, 56, 96], web: [255, 179, 71], login: [199, 125, 255], webbreach: [255, 95, 31] };
-  const KIND_LABELS = { ssh: "SSH攻撃", web: "Web攻撃", login: "不審ログイン成功", webbreach: "Web攻撃（成功応答）" };
+  const KIND_COLORS = { ssh: [255, 56, 96], web: [255, 179, 71], login: [199, 125, 255], webbreach: [255, 95, 31], outbound: [255, 64, 200] };
+  const KIND_LABELS = { ssh: "SSH攻撃", web: "Web攻撃", login: "不審ログイン成功", webbreach: "Web攻撃（成功応答）", outbound: "外向き通信（C2疑い）" };
   const MAX_ARCS = 70;
   const LIVE_POLL_MS = 5000;
   const FULL_RELOAD_MS = 60000;
@@ -24,7 +24,7 @@
   // SSHとWebを分けて見るための表示範囲（ALL / SSH / WEB）。選択はこのブラウザに記憶する
   let scope = "all";
   try { scope = localStorage.getItem("attackScope") || "all"; } catch (e) { /* 記憶できなくても動く */ }
-  if (!["all", "ssh", "web"].includes(scope)) scope = "all";
+  if (!["all", "ssh", "web", "out"].includes(scope)) scope = "all";
 
   let land = null;
   let projection = null;
@@ -38,7 +38,9 @@
   const sparks = [];        // ガード時の火花パーティクル
   const shieldHits = [];    // シールドの被弾箇所の発光
   let shieldFlash = 0;      // シールド全体の明滅（被弾で上がり、徐々に戻る）
-  const SHIELD_COLOR = [57, 255, 138];
+  // シールドと自宅の色は脅威レベルに連動する（緑=平常 / 橙=注意 / 赤=防げなかった攻撃あり）
+  const LEVEL_COLORS = { green: [57, 255, 138], amber: [255, 179, 71], red: [255, 56, 96] };
+  let SHIELD_COLOR = LEVEL_COLORS.green;
   function shieldRadius() {
     return Math.max(16, Math.min(34, width * 0.022));
   }
@@ -114,8 +116,11 @@
   // ---- 線（アーク） ----
   function launch(ev, live) {
     if (!projection || !data) return;
-    const from = projection([ev.lon, ev.lat]);
-    const to = projection([data.home.lon, data.home.lat]);
+    const outbound = ev.kind === "outbound";   // 外向き通信は自宅から宛先へ向かう
+    const src = projection([ev.lon, ev.lat]);
+    const dst = projection([data.home.lon, data.home.lat]);
+    const from = outbound ? dst : src;
+    const to = outbound ? src : dst;
     if (!from || !to) return;
     const dist = Math.hypot(to[0] - from[0], to[1] - from[1]);
     if (dist < 4) return;
@@ -123,7 +128,7 @@
     // 制御点を中点から上へ持ち上げて弧にする（遠いほど高く跳ねる）
     const mx = (from[0] + to[0]) / 2;
     const my = (from[1] + to[1]) / 2 - Math.min(dist * 0.45, height * 0.42);
-    const blocked = ev.kind !== "login" && ev.kind !== "webbreach";
+    const blocked = !["login", "webbreach", "outbound"].includes(ev.kind);
     const arc = {
       from, to, ctrl: [mx, my], blocked, stopT: 1,
       color: KIND_COLORS[ev.kind] || KIND_COLORS.ssh,
@@ -331,12 +336,12 @@
     const h = projection([data.home.lon, data.home.lat]);
     if (h) {
       const pulse = (now % 2000) / 2000;
-      fxCtx.strokeStyle = `rgba(57,255,138,${0.8 * (1 - pulse)})`;
+      fxCtx.strokeStyle = `rgba(${SHIELD_COLOR[0]},${SHIELD_COLOR[1]},${SHIELD_COLOR[2]},${0.8 * (1 - pulse)})`;
       fxCtx.lineWidth = 1.5;
       fxCtx.beginPath();
       fxCtx.arc(h[0], h[1], 4 + 14 * pulse, 0, Math.PI * 2);
       fxCtx.stroke();
-      fxCtx.fillStyle = "#39ff8a";
+      fxCtx.fillStyle = `rgb(${SHIELD_COLOR[0]},${SHIELD_COLOR[1]},${SHIELD_COLOR[2]})`;
       fxCtx.beginPath();
       fxCtx.arc(h[0], h[1], 3.5, 0, Math.PI * 2);
       fxCtx.fill();
@@ -393,7 +398,31 @@
     renderInfo(key);
   }
 
+  function renderHud() {
+    const el = document.getElementById("attackHud");
+    const hud = data && data.hud;
+    if (!el || !hud) return;
+    const names = { green: "SECURE", amber: "CAUTION", red: "ALERT" };
+    SHIELD_COLOR = LEVEL_COLORS[hud.level] || LEVEL_COLORS.green;
+    wrap.classList.toggle("threat-red", hud.level === "red");
+    el.className = `attack-hud lv-${hud.level}`;
+    const a = hud.attacks_24h || {};
+    const row = (k, v, hot) => `<span>${k}</span><span class="${hot ? "hud-hot" : ""}">${v}</span>`;
+    el.innerHTML = `<div class="hud-level">● ${names[hud.level] || hud.level}</div>`
+      + (hud.reasons.length ? `<div class="hud-reason">${hud.reasons.map(escapeHtml).join("<br>")}</div>` : '<div class="hud-reason">防げなかった攻撃・異常はありません</div>')
+      + '<div class="hud-grid">'
+      + row("SSH攻撃 24H", (a.ssh || 0).toLocaleString())
+      + row("WEB攻撃 24H", (a.web || 0).toLocaleString())
+      + row("外向き通信 24H", (a.out || 0).toLocaleString(), (a.out || 0) > 0)
+      + row("BREACH 6H", hud.breaches_6h, hud.breaches_6h > 0)
+      + row("CRITICAL 1H", hud.critical_1h, hud.critical_1h > 0)
+      + row("HOSTS", `${hud.hosts_online}/${hud.hosts_total}`, hud.hosts_online < hud.hosts_total)
+      + row("KEV脆弱性", hud.kev_open, hud.kev_open > 0)
+      + "</div>";
+  }
+
   function renderInfo(bumpedKey) {
+    renderHud();
     const top = document.getElementById("attackTop");
     const stats = document.getElementById("attackStats");
     stats.textContent = `${data.total_events.toLocaleString()}件 / ${data.unique_ips.toLocaleString()} IP`

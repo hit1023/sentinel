@@ -7,6 +7,7 @@
 検知したCRITICAL/WARNINGアラートは**Cloudflare AI Gateway経由でAIに脅威判定させ**、
 非脅威と判定されたものは自動的に静音化する（一次仕分けをAIに任せる設計）。
 通知は**メール（SMTP/Webhook）とSlack**に対応し、設定はWebUIから行える。
+ダッシュボードの**ATTACK MAP（世界地図のHUD）**は、攻撃の流れと脅威レベルを一目で示す。
 
 エージェントはDockerだけでなく、systemd(Linux)/launchd(macOS)によるネイティブ常駐にも
 対応しており、GitHub Releases配布のインストーラでDockerなしに導入できる。
@@ -22,7 +23,9 @@
 - [コンセプト](#コンセプト)
 - [アーキテクチャ概要](#アーキテクチャ概要)
 - [何を検知できるか](#何を検知できるか)
+- [ATTACK MAP（世界地図のHUD）](#attack-map世界地図のhud)
 - [「侵入された」を判断できるか](#侵入されたを判断できるか)
+- [SENTINELが守る範囲と、別途点検すること](#sentinelが守る範囲と別途点検すること)
 - [通知](#通知)
 - [クイックスタート](#クイックスタート)
 - [ドキュメント](#ドキュメント)
@@ -70,12 +73,24 @@
 | 認証ログ（`auth_watch`） | SSHのログイン失敗・成功 | ブルートフォース、root等への試行、見慣れない国からのログイン、**侵入成功の相関検知** |
 | ファイル整合性（`integrity_watch`） | 重要ファイルのSHA-256 | `/etc`の改ざん、`authorized_keys`の変更（即CRITICAL） |
 | プロセス/ネットワーク（`procnet_watch`） | 未知プロセス・未登録LISTENポート・高CPU | バックドアのポート開放、マイナー |
-| 外向き通信（`outbound_watch`） | LAN外への確立済み接続 | C2通信（攻撃ツール既定ポートは即CRITICAL） |
+| 外向き通信（`outbound_watch`） | LAN外への確立済み接続 | C2通信・情報持ち出し（攻撃ツール既定ポートは即CRITICAL）。地図の **OUT** にも描画 |
 | Webアクセスログ（`web_watch`） | Nginx/NPMのアクセスログ（ホストごとに有効化） | 管理パス探索、認証失敗の連発、パストラバーサル、**攻撃ペイロード、既知スキャナ、Webシェル探索、機密パスへの成功応答(CRITICAL)** |
 | 脆弱性照合（`package_watch` + マネージャー） | インストール済みdpkgパッケージ × OSV.dev / CISA KEV | 悪用確認済み(KEV)脆弱性の検知と対応ガイド |
 | **エージェント死活監視**（マネージャー側） | エージェントからの状態送信 | エージェントの停止・ネットワーク断・ホストのダウン |
 
 各検知の閾値・仕様・実装メモは [docs/detection.md](docs/detection.md) を参照。
+
+## ATTACK MAP（世界地図のHUD）
+
+ダッシュボードの地図は、**目で即座に状況を確認するためのHUD**。外部からの攻撃を、攻撃元から自宅へ向かう光の弧で描く。
+
+- **脅威レベル**（右上）: `SECURE`（緑）/ `CAUTION`（橙）/ `ALERT`（赤）。赤は「直近6時間に防げなかった攻撃」または「直近1時間のCRITICAL」。
+  シールドと自宅の色もレベルに連動し、`ALERT` ではパネルが赤く脈打つ。SSH・WEB・外向き通信の件数、BREACH、ホストのオンライン数、KEV脆弱性数も並ぶ。
+- **種類**: SSH攻撃（赤）／Web攻撃（橙）／不審ログイン成功（紫）／**Web攻撃の成功応答**（赤橙）／**外向き通信**（マゼンタ、自宅から宛先へ向かう）。
+- **ガード演出**: 防げた攻撃（ログイン失敗・Webスキャン）はシールドで止まって弾かれる。防げなかった攻撃（不審ログイン成功・Web成功応答）はシールドを貫通して着弾する。
+- **ALL / SSH / WEB / OUT** を切り替えて、種類ごとに見られる。
+
+詳細は [docs/webui.md](docs/webui.md) を参照。
 
 ## 「侵入された」を判断できるか
 
@@ -97,6 +112,18 @@
 - `sudo`/`su`による権限昇格、新規ユーザー作成、`.bash_history`の改変などは見ていない
 - 正規プロセス名への偽装やメモリ上だけで動くマルウェアは見えない
 - ホスト側の記録（`alerts.log`）は、root権限を奪われたら信用できない。判定の正はマネージャー側に置いている
+
+## SENTINELが守る範囲と、別途点検すること
+
+日本で相次ぐ情報漏洩は、取引先・委託先などの**サプライチェーン経由**の侵入、**AIを使った自動探索**、**認証情報の流出**が目立つ。
+SENTINELは「ホストへの侵入」と「Webへの攻撃」の検知に強いが、次の点は別に点検する。
+
+- **秘密情報の混入**: リポジトリ（git履歴を含む）に残ったAPIキー・秘密鍵 → 付属の **`tools/secret_scan.py`** で走査（外部ツール不要、値は出力しない）
+- **外から見た公開面**: 公開IPで想定外のポートが開いていないか（InternetDB等の外部観測）
+- **取引先・外部サービス・依存パッケージ**: アカウントの監査ログ、依存の脆弱性
+- **AIエージェントに預けた権限**: プロンプトインジェクションと、権限の最小化
+
+手順・頻度・見つかったときの対応は [docs/security-checklist.md](docs/security-checklist.md) を参照。
 
 ## 通知
 
@@ -138,6 +165,7 @@ macOS・Docker版・手動セットアップ・CI/CD・バージョニングは 
 | [docs/detection.md](docs/detection.md) | 各検知の仕様、侵入成功の相関検知、脆弱性照合、死活監視、Webログ監視の有効化、Sentinel Lab |
 | [docs/ai-triage.md](docs/ai-triage.md) | Cloudflare AI Gatewayによるトリアージ、抑制ルール、セットアップ手順 |
 | [docs/webui.md](docs/webui.md) | ダッシュボードの機能、ATTACK MAP、設定タブ（SSH許可リスト/メール/Slack/デイリーレポート/ダウンロード）、API、データ永続化 |
+| [docs/security-checklist.md](docs/security-checklist.md) | 情報漏洩対策の点検リスト（秘密情報の走査、公開面の確認、サプライチェーン、AIの権限） |
 | [docs/setup.md](docs/setup.md) | ネイティブ/Docker/手動セットアップ、新規ホストのチェックリスト、バージョニング・自動更新、CI/CD |
 | [docs/config-reference.md](docs/config-reference.md) | `config.yaml`全キーとマネージャーの環境変数 |
 | [docs/known-issues-and-lessons.md](docs/known-issues-and-lessons.md) | 既知の制約・ハマりどころ、過去に踏んだバグと教訓 |
@@ -183,6 +211,7 @@ hit-linux-ids/
 │   └── static/                       # index.html / style.css / app.js / netbg.js
 │
 ├── packaging/                     # ネイティブ常駐用の定義（systemd unit / launchd plist）
+├── tools/                         # 点検ツール（secret_scan.py: リポジトリ内の秘密情報の走査）
 ├── lab/                           # Sentinel Lab（模擬Webサーバー、検知の動作確認用）
 ├── tests/                         # ユニットテスト
 └── docs/                          # 詳細ドキュメントと画像

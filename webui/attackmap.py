@@ -15,6 +15,8 @@ import time
 import urllib.request
 
 IP_RE = re.compile(r"from=([0-9a-fA-F:.]+)|疑い: ([0-9a-fA-F:.]+) から|ip=([0-9a-fA-F:.]+)")
+# outbound_watch: 「…: 203.0.113.9:4444 pid=…」の宛先IP（自ホストから外へ出る通信）
+OUTBOUND_RE = re.compile(r"(\d{1,3}(?:\.\d{1,3}){3}):\d{1,5} pid=")
 # ip-api.comのbatchは1リクエスト100件まで・無料枠は毎分15リクエストまで
 GEO_BATCH_URL = "http://ip-api.com/batch?fields=status,query,lat,lon,country,countryCode,city&lang=ja"
 GEO_BATCH_SIZE = 100
@@ -27,6 +29,16 @@ GEO_RETRY_FAILED_AFTER = 24 * 3600
 # 攻撃先（自宅）の位置。既定は東京。ATTACK_MAP_HOME="緯度,経度,表示名" で変更できる
 _home = (os.environ.get("ATTACK_MAP_HOME") or "35.68,139.69,TOKYO").split(",")
 HOME = {"lat": float(_home[0]), "lon": float(_home[1]), "label": _home[2] if len(_home) > 2 else "HOME"}
+
+
+# 攻撃が「防げなかった」(シールドを貫通する)種類。HUDのBREACH件数の対象
+BREACH_KINDS = ("login", "webbreach", "outbound")
+SCOPE_CATEGORIES = {
+    "ssh": ("auth_watch",),
+    "web": ("web_watch",),
+    "out": ("outbound_watch",),
+}
+ALL_CATEGORIES = ("auth_watch", "web_watch", "outbound_watch")
 
 
 def init_db(conn):
@@ -48,13 +60,26 @@ def init_db(conn):
 
 def classify(record: dict) -> tuple[str, str] | None:
     """攻撃として地図に載せるアラートなら (ip, kind) を返す。
-    kind: ssh / web / login（不審ログイン成功）/ webbreach（Webで機密パス等に成功応答が返った）"""
+    kind: ssh / web / login（不審ログイン成功）/ webbreach（Webで機密パス等に成功応答が返った）/
+          outbound（自ホストから外へ出る不審な通信。C2・情報持ち出しの疑い。IPは宛先）"""
     category = record.get("category")
     message = record.get("message") or ""
     if category == "auth_watch":
         if message.startswith("ログイン成功"):
             return None  # 普段のログイン（自分自身）は攻撃ではない
         kind = "login" if "ログイン成功" in message else "ssh"
+    elif category == "outbound_watch":
+        m = OUTBOUND_RE.search(message)
+        if not m:
+            return None
+        ip, kind = m.group(1), "outbound"
+        try:
+            addr = ipaddress.ip_address(ip)
+        except ValueError:
+            return None
+        if addr.is_private or addr.is_loopback or addr.is_link_local or addr.is_reserved:
+            return None
+        return ip, kind
     elif category == "web_watch":
         # 機密パス等への2xx応答は「防げていない」攻撃。SSHの不審ログイン成功と同様にシールドを貫通させる
         kind = "webbreach" if "成功応答" in message else "web"
@@ -71,6 +96,44 @@ def classify(record: dict) -> tuple[str, str] | None:
     if addr.is_private or addr.is_loopback or addr.is_link_local or addr.is_reserved:
         return None
     return ip, kind
+
+
+def build_hud(records: list[dict], critical_1h: int, hosts: list[dict], kev_open: int, now: float | None = None) -> dict:
+    """HUD（目で即座に状況を把握するための要約）。records: 直近24時間の攻撃系アラート。
+    脅威レベル: RED = 直近6時間に防げなかった攻撃(不審ログイン成功/Web成功応答/不審な外向き通信)
+    または直近1時間にCRITICAL / AMBER = オフライン・KEV入り脆弱性・24時間内のCRITICALあり / GREEN = それ以外"""
+    now = now or time.time()
+    attacks = {"ssh": 0, "web": 0, "out": 0}
+    breaches_6h = 0
+    for r in records:
+        hit = classify(r)
+        if not hit:
+            continue
+        kind = hit[1]
+        attacks["ssh" if kind in ("ssh", "login") else "out" if kind == "outbound" else "web"] += 1
+        if kind in BREACH_KINDS and (r.get("epoch") or 0) > now - 6 * 3600:
+            breaches_6h += 1
+    online = sum(1 for h in hosts if h.get("online"))
+    offline = [h.get("host") for h in hosts if not h.get("online")]
+    reasons = []
+    level = "green"
+    if breaches_6h:
+        level = "red"
+        reasons.append(f"防げなかった攻撃が直近6時間に{breaches_6h}件")
+    if critical_1h:
+        level = "red"
+        reasons.append(f"直近1時間にCRITICAL {critical_1h}件")
+    if level != "red":
+        if offline:
+            level = "amber"
+            reasons.append(f"応答なしのホスト: {', '.join(map(str, offline[:3]))}")
+        if kev_open:
+            level = "amber"
+            reasons.append(f"悪用確認済み(KEV)の脆弱性 {kev_open}件が未解消")
+    return {
+        "level": level, "reasons": reasons, "attacks_24h": attacks, "breaches_6h": breaches_6h,
+        "critical_1h": critical_1h, "hosts_online": online, "hosts_total": len(hosts), "kev_open": kev_open,
+    }
 
 
 class AttackMap:

@@ -1325,8 +1325,9 @@ def api_attack_map(hours: float = 24, since: float | None = None, scope: str = "
     """ATTACK MAPパネル用。攻撃系アラート(auth_watch/web_watch、CRITICAL/WARNINGは監査DBに
     全件残っている)から攻撃元IPの位置・集計・直近イベントを返す。
     since指定時は、その時刻より新しいイベントだけを返す（ライブ描画用の軽量ポーリング）。
-    scopeでSSH(auth_watch)とWeb(web_watch)を分けて返せる（ssh / web / all）。"""
-    categories = {"ssh": ("auth_watch",), "web": ("web_watch",)}.get(scope, ("auth_watch", "web_watch"))
+    scopeでSSH(auth_watch)・Web(web_watch)・外向き通信(outbound_watch)を分けて返せる
+    （ssh / web / out / all）。通常(全期間取得)のレスポンスにはHUD用の要約(hud)も含める。"""
+    categories = attackmap.SCOPE_CATEGORIES.get(scope, attackmap.ALL_CATEGORIES)
     start = since if since else time.time() - min(max(hours, 1), 24 * 7) * 3600
     with _db_connect() as conn:
         rows = conn.execute(
@@ -1337,7 +1338,37 @@ def api_attack_map(hours: float = 24, since: float | None = None, scope: str = "
     data = attack_map.build([dict(r) for r in rows])
     if since:
         return {"events": data["events"], "home": data["home"]}
+    data["hud"] = _attack_hud(max(hours, 1) if hours else 24)
     return data
+
+
+_kev_cache = {"at": 0.0, "n": 0}
+
+
+def _attack_hud(hours: float = 24) -> dict:
+    """HUD用の要約。表示範囲(scope)に関係なく、全体の状況を返す。"""
+    now = time.time()
+    with _db_connect() as conn:
+        recs = [dict(r) for r in conn.execute(
+            f"SELECT * FROM alerts WHERE category IN ({','.join('?' * len(attackmap.ALL_CATEGORIES))}) AND epoch > ?",
+            (*attackmap.ALL_CATEGORIES, now - 86400),
+        ).fetchall()]
+        critical_1h = conn.execute(
+            "SELECT COUNT(*) FROM alerts WHERE epoch > ? AND severity = 'critical'"
+            " AND category NOT IN ('heartbeat')",
+            (now - 3600,),
+        ).fetchone()[0]
+    if now - _kev_cache["at"] > 300:  # 脆弱性の集計は重いので5分キャッシュ
+        try:
+            _kev_cache["n"] = sum(h.get("kev", 0) for h in vuln_scanner.summary().get("hosts", []))
+        except Exception as e:
+            print(f"[attackmap] KEV集計に失敗: {e}")
+        _kev_cache["at"] = now
+    hosts = []
+    for host, info in _read_hosts_status().items():
+        last_seen = info.get("received_at") or info.get("updated_at") or 0
+        hosts.append({"host": host, "online": (now - last_seen) <= HOST_STALE_SECONDS})
+    return attackmap.build_hud(recs, critical_1h, hosts, _kev_cache["n"], now)
 
 
 @app.get("/api/stats")

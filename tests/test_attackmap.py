@@ -37,6 +37,22 @@ class ClassifyTests(unittest.TestCase):
             attackmap.classify({"category": "web_watch", "message": "Webアクセス異常: 攻撃ペイロードを含むリクエスト ip=185.220.101.4 件数=1 期間=300秒 種別=SQLi"}),
             ("185.220.101.4", "web"))
 
+    def test_outbound_destination_and_hud_levels(self):
+        out = {"category": "outbound_watch", "message": "不審な外向き通信を検知（既知の攻撃ツールが使うポート）: 185.220.101.4:4444 pid=123 process=bash", "epoch": 1000.0}
+        self.assertEqual(attackmap.classify(out), ("185.220.101.4", "outbound"))
+        self.assertIsNone(attackmap.classify({"category": "outbound_watch", "message": "未登録ポートへの外向き通信を検知: 192.168.0.5:9999 pid=1"}))
+        host = lambda online: [{"host": "a", "online": online}]
+        quiet = {"category": "auth_watch", "message": "存在しないユーザーへのログイン試行: user=a from=185.220.101.4", "epoch": 1000.0}
+        green = attackmap.build_hud([quiet], 0, host(True), 0, now=2000.0)
+        self.assertEqual((green["level"], green["attacks_24h"]["ssh"]), ("green", 1))
+        self.assertEqual(attackmap.build_hud([quiet], 0, host(False), 0, now=2000.0)["level"], "amber")
+        self.assertEqual(attackmap.build_hud([quiet], 0, host(True), 2, now=2000.0)["level"], "amber")
+        red = attackmap.build_hud([quiet, out], 0, host(True), 0, now=2000.0)  # 6時間以内の外向き通信=防げなかった
+        self.assertEqual((red["level"], red["breaches_6h"], red["attacks_24h"]["out"]), ("red", 1, 1))
+        self.assertEqual(attackmap.build_hud([quiet], 1, host(True), 0, now=2000.0)["level"], "red")
+        old = {**out, "epoch": 2000.0 - 7 * 3600}
+        self.assertEqual(attackmap.build_hud([old], 0, host(True), 0, now=2000.0)["level"], "green")
+
     def test_normal_logins_lan_and_other_categories_are_ignored(self):
         self.assertIsNone(attackmap.classify({"category": "auth_watch", "message": "ログイン成功: user=hit from=203.0.113.9 method=publickey"}))
         self.assertIsNone(attackmap.classify({"category": "auth_watch", "message": "存在しないユーザーへのログイン試行: user=a from=192.168.0.118"}))
