@@ -136,7 +136,8 @@
   `.gitignore` 済みのファイルも見る
 - **値そのものは通知に含めない**（先頭4文字と長さのみ）。通知経路・ログ経由の二次漏洩を避けるため
 - 初回は、すでに存在するものをリポジトリごとにまとめて報告し、以後は新規分だけを通知する
-- 有効化: `config.yaml` の `secret_watch.scan_roots`、または環境変数 `SECRET_WATCH_ROOTS`（カンマ区切り、`.env` に書く）。
+- 有効化: `config.yaml` の `secret_watch.scan_roots`、または環境変数 `SECRET_WATCH_ROOTS`（カンマ区切り）。Docker版は `.env` に書く。ネイティブ版は
+  インストーラの `--secret-watch-roots /path/to/repos` か `/etc/sentinel/env`（再インストール・アップグレードでも保持される）。
   Docker版ではホストのファイルシステムが `/hostfs` に読み取り専用でマウントされており、パスは実パス表記のまま指定する
 - 単発の走査は `tools/secret_scan.py`（同じロジックのCLI）。公開前の確認にも使える
 
