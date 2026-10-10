@@ -69,6 +69,7 @@
     <div class="modal-tabs">
       <span class="modal-tab active" data-tab="ssh-whitelist">🔐 SSH許可リスト</span>
       <span class="modal-tab" data-tab="email-notify">🔔 メール通知</span>
+      <span class="modal-tab" data-tab="slack-notify">💬 Slack・死活監視</span>
       <span class="modal-tab" data-tab="download">⬇ ダウンロード</span>
     </div>
     <div class="modal-body">
@@ -148,6 +149,56 @@
             <span class="mini-btn" id="saveDailyReportBtn">保存</span>
             <span class="mini-btn" id="testDailyReportBtn">テスト送信</span>
             <span class="mono-dim" id="dailyReportStatus"></span>
+          </div>
+        </div>
+      </div>
+
+      <div class="modal-tab-panel" id="tab-slack-notify" style="display:none;">
+        <p class="mono-dim" style="margin:0 0 12px;">
+          アラートをSlackに通知します。<a href="https://api.slack.com/messaging/webhooks" target="_blank" rel="noopener" style="color:var(--neon-cyan);">Incoming Webhook</a>のURLを登録してください
+          （抑制ルール・SSH許可リストでINFOに格下げされたものは通知されません）。
+        </p>
+        <div class="settings-form">
+          <label class="settings-check">
+            <input type="checkbox" id="slackEnabled"> Slack通知を有効にする
+          </label>
+          <label class="settings-label">Webhook URL（登録済みの場合は末尾のみ表示。変更する時だけ入力）</label>
+          <input type="password" id="slackWebhookUrl" placeholder="https://hooks.slack.com/services/..." autocomplete="off">
+          <span class="mono-dim" id="slackWebhookMasked" style="font-size:11px;"></span>
+          <label class="settings-label">通知する重大度</label>
+          <select id="slackMinSeverity" class="dl-select">
+            <option value="warning">WARNING以上（CRITICALを含む）</option>
+            <option value="critical">CRITICALのみ</option>
+          </select>
+          <label class="settings-label">CRITICAL時のメンション（任意。例: &lt;!here&gt; や &lt;@U123ABC&gt;）</label>
+          <input type="text" id="slackMention" placeholder="<!here>">
+          <div class="settings-actions">
+            <span class="mini-btn" id="saveSlackBtn">保存</span>
+            <span class="mini-btn" id="testSlackBtn">テスト送信</span>
+            <span class="mono-dim" id="slackStatus"></span>
+          </div>
+
+          <p class="mono-dim" style="margin:20px 0 0; font-size:11px; border-top:1px solid var(--border); padding-top:14px;">— 💓 エージェント死活監視 —</p>
+          <p class="mono-dim" style="margin:6px 0 12px; font-size:11px;">
+            エージェントからの状態送信が途絶えたホストをアラートにします。侵入者がSENTINELを停止しても
+            「静かになった」で済まさないための監視です（メール/Slackの通知設定に従って通知）。
+            計画停止するホスト（電源管理でシャットダウンするサーバー等）は除外してください。
+          </p>
+          <label class="settings-check">
+            <input type="checkbox" id="heartbeatEnabled"> 死活監視を有効にする
+          </label>
+          <label class="settings-label">途絶とみなすまでの秒数（60以上）</label>
+          <input type="text" id="heartbeatGrace" placeholder="300">
+          <label class="settings-label">途絶時の重大度</label>
+          <select id="heartbeatSeverity" class="dl-select">
+            <option value="warning">WARNING</option>
+            <option value="critical">CRITICAL（メールも送信）</option>
+          </select>
+          <label class="settings-label">監視から除外するホスト（カンマ区切り、HOSTSパネルの名前）</label>
+          <input type="text" id="heartbeatIgnoreHosts" placeholder="h-1, h-2">
+          <div class="settings-actions">
+            <span class="mini-btn" id="saveHeartbeatBtn">保存</span>
+            <span class="mono-dim" id="heartbeatStatus"></span>
           </div>
         </div>
       </div>

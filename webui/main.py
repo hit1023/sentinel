@@ -134,6 +134,16 @@ NOTIFY_SETTINGS_DEFAULTS = {
     # --- デイリーレポート ---
     "daily_report_enabled": "false",
     "daily_report_hour": "9",  # JST、0-23
+    # --- Slack通知（Incoming Webhook） ---
+    "slack_enabled": "false",
+    "slack_webhook_url": "",
+    "slack_min_severity": "warning",  # この重大度以上を通知（warning / critical）
+    "slack_mention": "",  # CRITICAL時だけ先頭に付けるメンション（例: <!here>）
+    # --- エージェント死活監視（ハートビート） ---
+    "heartbeat_enabled": "true",
+    "heartbeat_grace_seconds": "300",
+    "heartbeat_severity": "warning",  # 途絶時の重大度（warning / critical）
+    "heartbeat_ignore_hosts": "",  # カンマ区切り。計画停止するホスト等を除外
 }
 
 
@@ -432,6 +442,96 @@ def _send_critical_email(record: dict, force: bool = False):
         print(f"[notify] メール送信に失敗: {e}")
 
 
+SEVERITY_RANK = {"info": 0, "warning": 1, "critical": 2}
+SLACK_WEBHOOK_PREFIXES = ("https://hooks.slack.com/", "https://hooks.slack-gov.com/")
+SEVERITY_EMOJI = {"critical": "🚨", "warning": "⚠️", "info": "ℹ️"}
+
+
+def _get_slack_settings() -> dict:
+    return {
+        "enabled": _get_app_setting("slack_enabled") == "true",
+        "webhook_url": _get_app_setting("slack_webhook_url"),
+        "min_severity": _get_app_setting("slack_min_severity") or "warning",
+        "mention": _get_app_setting("slack_mention"),
+    }
+
+
+def _mask_webhook(url: str) -> str:
+    # Webhook URLはそれ自体が送信権限を持つ秘密情報のため、画面には末尾4文字しか返さない
+    return f"{url[:24]}…{url[-4:]}" if url else ""
+
+
+def _slack_escape(text: str) -> str:
+    # ログ由来の文字列に<!channel>等が含まれていてもメンション/リンクとして解釈させない
+    return (text or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+def _build_slack_payload(record: dict, mention: str = "") -> dict:
+    severity = record.get("severity", "info")
+    host = _slack_escape(record.get("host", "unknown"))
+    category = _slack_escape(record.get("category", ""))
+    title = f"{SEVERITY_EMOJI.get(severity, '')} [{severity.upper()}] {host} / {category}"
+    if mention and severity == "critical":
+        title = f"{mention} {title}"
+    lines = [_slack_escape(record.get("message", ""))]
+    if record.get("ai_summary"):
+        lines.append(f"🤖 {_slack_escape(record['ai_summary'])}")
+    context = f"SENTINEL · {record.get('timestamp', '')}"
+    return {
+        "text": f"{title}\n{lines[0]}",
+        "blocks": [
+            {"type": "section", "text": {"type": "mrkdwn", "text": f"*{title}*"}},
+            {"type": "section", "text": {"type": "mrkdwn", "text": "\n".join(lines)}},
+            {"type": "context", "elements": [{"type": "mrkdwn", "text": context}]},
+        ],
+    }
+
+
+def _post_slack(webhook_url: str, payload: dict):
+    if not webhook_url.startswith(SLACK_WEBHOOK_PREFIXES):
+        raise ValueError("Slack Incoming Webhook URLではありません")
+    req = urllib.request.Request(
+        webhook_url,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=8) as resp:
+        resp.read()
+
+
+def _send_slack_alert(record: dict, force: bool = False):
+    settings = _get_slack_settings()
+    if not settings["webhook_url"] or (not force and not settings["enabled"]):
+        return
+    if not force:
+        threshold = SEVERITY_RANK.get(settings["min_severity"], 1)
+        if SEVERITY_RANK.get(record.get("severity", "info"), 0) < threshold:
+            return
+    try:
+        _post_slack(settings["webhook_url"], _build_slack_payload(record, settings["mention"]))
+    except Exception as e:
+        # Slack送信の失敗でアラート処理自体を止めない。ローカルログにだけ残す。
+        print(f"[notify] Slack送信に失敗: {e}")
+
+
+def _dispatch_notifications(record: dict):
+    """ingestされたアラートの最終的な重大度に応じて、メール・Slackへ通知する。
+    抑制ルール/SSH許可リストでINFOへ格下げされたものは自然に通知対象から外れる。"""
+    if record.get("severity") == "critical":
+        _send_critical_email(record)
+    _send_slack_alert(record)
+
+
+def _process_new_record(record: dict):
+    """エージェントからのingestとサーバー自身が生成するアラート(ハートビート等)で
+    共通の処理: 許可リスト・抑制ルール適用 → 保存。通知は呼び出し側で行う。"""
+    _apply_ssh_whitelist(record)
+    _apply_suppressions(record)
+    _append_alert(record)
+    _persist_important(record)
+
+
 def _load_suppressions() -> list[dict]:
     with _db_connect() as conn:
         rows = conn.execute("SELECT * FROM suppressions ORDER BY created_at DESC").fetchall()
@@ -611,9 +711,8 @@ def _emit_internal_alert(category: str, message: str, severity: str, host: str):
     _apply_suppressions(record)
     _append_alert(record)
     _persist_important(record)
-    if record.get("severity") == "critical":
-        # 照合はバックグラウンドスレッドで動いているので、ここで同期送信してよい
-        _send_critical_email(record)
+    # 照合はバックグラウンドスレッドで動いているので、ここで同期送信してよい（メール/Slack）
+    _dispatch_notifications(record)
 
 
 vuln_scanner = vuln.VulnScanner(_db_connect, _emit_internal_alert, _get_app_setting, _set_app_setting)
@@ -641,14 +740,10 @@ async def ingest_alert(
         record["ai_summary"] = None
     # AIの判定より先に、ユーザー登録の抑制ルール・SSH許可リストを適用する
     # （「これは脅威ではない」と一度教えたものはAIの結果を待たず確実に黙らせる）
-    _apply_ssh_whitelist(record)
-    _apply_suppressions(record)
-    _append_alert(record)
-    _persist_important(record)
-    # 抑制・ホワイトリストを経てなお最終的にcriticalのままのものだけメール通知する
+    _process_new_record(record)
+    # 抑制・ホワイトリストを経た最終的な重大度に応じてメール/Slack通知する
     # （レスポンスを待たせないようBackgroundTasksで非同期に送信）
-    if record.get("severity") == "critical":
-        background_tasks.add_task(_send_critical_email, record)
+    background_tasks.add_task(_dispatch_notifications, record)
     return {"ok": True, "id": record["id"]}
 
 
@@ -825,6 +920,178 @@ async def api_test_daily_report_settings():
     if not ok:
         raise HTTPException(status_code=400, detail=err or "送信に失敗しました")
     return {"ok": True}
+
+
+@app.get("/api/slack-settings")
+def api_get_slack_settings():
+    st = _get_slack_settings()
+    return {
+        "enabled": st["enabled"],
+        "min_severity": st["min_severity"],
+        "mention": st["mention"],
+        "webhook_configured": bool(st["webhook_url"]),
+        "webhook_masked": _mask_webhook(st["webhook_url"]),
+    }
+
+
+@app.post("/api/slack-settings")
+async def api_set_slack_settings(payload: dict):
+    if "webhook_url" in payload:
+        url = (payload["webhook_url"] or "").strip()
+        if url and not url.startswith(SLACK_WEBHOOK_PREFIXES):
+            raise HTTPException(status_code=400, detail="Slack Incoming Webhook URL（https://hooks.slack.com/...）を指定してください")
+        _set_app_setting("slack_webhook_url", url)
+    if "enabled" in payload:
+        _set_app_setting("slack_enabled", "true" if payload["enabled"] else "false")
+    if "min_severity" in payload:
+        if payload["min_severity"] not in ("warning", "critical"):
+            raise HTTPException(status_code=400, detail="min_severityはwarningかcriticalです")
+        _set_app_setting("slack_min_severity", payload["min_severity"])
+    if "mention" in payload:
+        _set_app_setting("slack_mention", (payload["mention"] or "").strip())
+    return {"ok": True, "settings": api_get_slack_settings()}
+
+
+@app.post("/api/slack-settings/test")
+async def api_test_slack_settings():
+    st = _get_slack_settings()
+    if not st["webhook_url"]:
+        raise HTTPException(status_code=400, detail="Webhook URLが未設定です")
+    record = {
+        "host": "sentinel-test",
+        "category": "test",
+        "severity": "critical",
+        "message": "これはSENTINELからのテスト通知です。この表示が届いていればSlack連携は正常です。",
+        "timestamp": datetime.datetime.now(JST).strftime("%Y-%m-%dT%H:%M:%S"),
+    }
+    try:
+        await asyncio.to_thread(_post_slack, st["webhook_url"], _build_slack_payload(record, st["mention"]))
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"送信に失敗しました: {e}")
+    return {"ok": True}
+
+
+# --- エージェント死活監視（ハートビート） ---
+# 侵入者がroot権限でSENTINELエージェントを止めると、アラートが来なくなるだけで
+# 「静かになった」ようにしか見えない。エージェントからのステータス送信が途絶えたホストを
+# 司令塔側から検知してアラートにする。計画停止するホストは除外リストで外せる。
+HEARTBEAT_STATE_PATH = os.path.join(DATA_DIR, "heartbeat_state.json")
+HEARTBEAT_CHECK_INTERVAL = 30
+_STARTED_AT = time.time()
+
+
+def _get_heartbeat_settings() -> dict:
+    try:
+        grace = max(60, int(_get_app_setting("heartbeat_grace_seconds") or 300))
+    except ValueError:
+        grace = 300
+    return {
+        "enabled": _get_app_setting("heartbeat_enabled") == "true",
+        "grace_seconds": grace,
+        "severity": _get_app_setting("heartbeat_severity") or "warning",
+        "ignore_hosts": _get_app_setting("heartbeat_ignore_hosts"),
+    }
+
+
+def _read_heartbeat_state() -> dict:
+    try:
+        with open(HEARTBEAT_STATE_PATH, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def _write_heartbeat_state(state: dict):
+    os.makedirs(os.path.dirname(HEARTBEAT_STATE_PATH), exist_ok=True)
+    with open(HEARTBEAT_STATE_PATH, "w", encoding="utf-8") as f:
+        json.dump(state, f)
+
+
+def _make_server_record(host: str, category: str, severity: str, message: str) -> dict:
+    now = time.time()
+    return {
+        "id": uuid.uuid4().hex,
+        "epoch": now,
+        "timestamp": datetime.datetime.fromtimestamp(now, JST).strftime("%Y-%m-%dT%H:%M:%S"),
+        "host": host,
+        "category": category,
+        "severity": severity,
+        "original_severity": None,
+        "message": message,
+        "ai_summary": None,
+        "ai_dismissed": False,
+    }
+
+
+def check_heartbeats(now: float | None = None) -> list[dict]:
+    """ホストごとの死活状態(up/down)の変化を検出し、生成したアラートレコードを返す
+    （保存・通知は呼び出し側）。初回観測時は現在の状態を静かに記録するだけで、
+    WebUI自体の再起動直後はエージェントが再送してくるまでの猶予を設ける。"""
+    now = now or time.time()
+    settings = _get_heartbeat_settings()
+    if not settings["enabled"]:
+        return []
+    grace = settings["grace_seconds"]
+    if now - _STARTED_AT < grace:
+        return []
+    ignored = {h.strip() for h in settings["ignore_hosts"].split(",") if h.strip()}
+    state = _read_heartbeat_state()
+    records = []
+    for host, info in _read_hosts_status().items():
+        last_seen = info.get("received_at") or info.get("updated_at") or 0
+        stale = (now - last_seen) > grace
+        prev = state.get(host)
+        state[host] = "down" if stale else "up"
+        if prev is None or host in ignored:
+            continue
+        minutes = int((now - last_seen) // 60)
+        if prev == "up" and stale:
+            records.append(_make_server_record(
+                host, "heartbeat", settings["severity"],
+                f"エージェントからの応答が途絶: host={host} 最終受信 {minutes}分前"
+                "（停止・ネットワーク断・侵害によるエージェント停止の可能性。計画停止なら除外設定を）",
+            ))
+        elif prev == "down" and not stale:
+            records.append(_make_server_record(
+                host, "heartbeat", "info", f"エージェントからの応答が復帰: host={host}",
+            ))
+    _write_heartbeat_state(state)
+    return records
+
+
+async def _heartbeat_loop():
+    while True:
+        await asyncio.sleep(HEARTBEAT_CHECK_INTERVAL)
+        try:
+            for record in await asyncio.to_thread(check_heartbeats):
+                await asyncio.to_thread(_process_new_record, record)
+                await asyncio.to_thread(_dispatch_notifications, record)
+        except Exception as e:
+            print(f"[heartbeat] 監視ループでエラー: {e}")
+
+
+@app.get("/api/heartbeat-settings")
+def api_get_heartbeat_settings():
+    return _get_heartbeat_settings()
+
+
+@app.post("/api/heartbeat-settings")
+async def api_set_heartbeat_settings(payload: dict):
+    if "enabled" in payload:
+        _set_app_setting("heartbeat_enabled", "true" if payload["enabled"] else "false")
+    if "grace_seconds" in payload:
+        try:
+            grace = max(60, int(payload["grace_seconds"]))
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=400, detail="grace_secondsは60以上の整数です")
+        _set_app_setting("heartbeat_grace_seconds", str(grace))
+    if "severity" in payload:
+        if payload["severity"] not in ("warning", "critical"):
+            raise HTTPException(status_code=400, detail="severityはwarningかcriticalです")
+        _set_app_setting("heartbeat_severity", payload["severity"])
+    if "ignore_hosts" in payload:
+        _set_app_setting("heartbeat_ignore_hosts", (payload["ignore_hosts"] or "").strip())
+    return {"ok": True, "settings": _get_heartbeat_settings()}
 
 
 @app.post("/api/ingest/status")
@@ -1241,6 +1508,7 @@ async def ws_alerts(ws: WebSocket):
 async def _on_startup():
     asyncio.create_task(_daily_report_scheduler_loop())
     asyncio.create_task(_vuln_scheduler_loop())
+    asyncio.create_task(_heartbeat_loop())
 
 
 app.mount("/", StaticFiles(directory=os.path.join(os.path.dirname(__file__), "static"), html=True), name="static")

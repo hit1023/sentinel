@@ -32,7 +32,9 @@ class Notifier:
         self.central_timeout = resolved["timeout_seconds"]
         self.host_label = resolved["host_label"]
 
-    def alert(self, category: str, message: str, severity: str = "warning"):
+    def alert(self, category: str, message: str, severity: str = "warning", allow_ai_dismiss: bool = True):
+        """allow_ai_dismiss=Falseの場合、AIが非脅威と判定しても重大度を格下げしない
+        （侵入成功の相関検知のように、AIの判断で黙らせてはいけないアラート用）。"""
         now = datetime.datetime.now(JST)
         ts = now.strftime("%Y-%m-%dT%H:%M:%S")
 
@@ -49,7 +51,7 @@ class Notifier:
             auto_dismiss = ai_triage.get_config(self.ai_triage_config)["auto_dismiss_non_threats"]
             # Web logs contain attacker-controlled URLs. AI may explain an alert,
             # but untrusted log content must not silently downgrade its severity.
-            if not result.is_threat and auto_dismiss and category != "web_watch":
+            if not result.is_threat and auto_dismiss and allow_ai_dismiss and category != "web_watch":
                 effective_severity = "info"
                 ai_dismissed = True
 

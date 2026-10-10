@@ -735,6 +735,8 @@ document.getElementById("openSettingsBtn")?.addEventListener("click", () => {
   loadSshWhitelist();
   loadNotifySettings();
   loadDailyReportSettings();
+  loadSlackSettings();
+  loadHeartbeatSettings();
   loadReleases();
 });
 
@@ -914,6 +916,95 @@ document.getElementById("testNotifySettingsBtn")?.addEventListener("click", asyn
     status.textContent = `失敗: ${e.message}`;
   } finally {
     setTimeout(() => { status.textContent = ""; }, 4000);
+  }
+});
+
+// --- Slack通知 / 死活監視 ---
+async function postJson(url, body) {
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body || {}),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || "リクエストに失敗しました");
+  }
+  return res.json();
+}
+
+function flashStatus(id, text, ms = 3000) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.textContent = text;
+  setTimeout(() => { el.textContent = ""; }, ms);
+}
+
+async function loadSlackSettings() {
+  try {
+    const data = await (await fetch("/api/slack-settings")).json();
+    document.getElementById("slackEnabled").checked = !!data.enabled;
+    document.getElementById("slackMinSeverity").value = data.min_severity || "warning";
+    document.getElementById("slackMention").value = data.mention || "";
+    document.getElementById("slackWebhookUrl").value = "";
+    document.getElementById("slackWebhookMasked").textContent =
+      data.webhook_configured ? `登録済み: ${data.webhook_masked}` : "未登録";
+  } catch (e) {
+    console.error("Slack設定の取得に失敗", e);
+  }
+}
+
+document.getElementById("saveSlackBtn")?.addEventListener("click", async () => {
+  const body = {
+    enabled: document.getElementById("slackEnabled").checked,
+    min_severity: document.getElementById("slackMinSeverity").value,
+    mention: document.getElementById("slackMention").value,
+  };
+  // URLは入力された時だけ送る（空のまま保存しても登録済みURLを消さない）
+  const url = document.getElementById("slackWebhookUrl").value.trim();
+  if (url) body.webhook_url = url;
+  try {
+    await postJson("/api/slack-settings", body);
+    flashStatus("slackStatus", "保存しました");
+    loadSlackSettings();
+  } catch (e) {
+    flashStatus("slackStatus", `失敗: ${e.message}`, 5000);
+  }
+});
+
+document.getElementById("testSlackBtn")?.addEventListener("click", async () => {
+  flashStatus("slackStatus", "送信中…", 10000);
+  try {
+    await postJson("/api/slack-settings/test");
+    flashStatus("slackStatus", "テストを送信しました（保存済みのURLに送信）");
+  } catch (e) {
+    flashStatus("slackStatus", `失敗: ${e.message}`, 5000);
+  }
+});
+
+async function loadHeartbeatSettings() {
+  try {
+    const data = await (await fetch("/api/heartbeat-settings")).json();
+    document.getElementById("heartbeatEnabled").checked = !!data.enabled;
+    document.getElementById("heartbeatGrace").value = data.grace_seconds ?? 300;
+    document.getElementById("heartbeatSeverity").value = data.severity || "warning";
+    document.getElementById("heartbeatIgnoreHosts").value = data.ignore_hosts || "";
+  } catch (e) {
+    console.error("死活監視設定の取得に失敗", e);
+  }
+}
+
+document.getElementById("saveHeartbeatBtn")?.addEventListener("click", async () => {
+  try {
+    await postJson("/api/heartbeat-settings", {
+      enabled: document.getElementById("heartbeatEnabled").checked,
+      grace_seconds: document.getElementById("heartbeatGrace").value,
+      severity: document.getElementById("heartbeatSeverity").value,
+      ignore_hosts: document.getElementById("heartbeatIgnoreHosts").value,
+    });
+    flashStatus("heartbeatStatus", "保存しました");
+  } catch (e) {
+    flashStatus("heartbeatStatus", `失敗: ${e.message}`, 5000);
   }
 });
 

@@ -54,6 +54,13 @@ auth_watch:
   # ベースラインとして静かに記録するだけで、それ以降の新しい国だけが対象）。
   # 社内LAN(プライベートIP)からのアクセスは常にスキップされる。
   geoip_enabled: true
+  # 侵入成功の相関検知: 同一IPから直近compromise_window_seconds以内に
+  # compromise_min_failures回以上ログインに失敗した後、そのIPからログインに成功したら
+  # 認証突破（侵入成功）の疑いとして閾値なしで即CRITICAL通知する。
+  # AIトリアージによる格下げは行わない。
+  compromise_detection: true
+  compromise_window_seconds: 3600
+  compromise_min_failures: 5
 
 # --- Webアクセスログ監視 ---
 # ホストごとにログの場所が異なるため既定はOFF。

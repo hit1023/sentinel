@@ -31,6 +31,10 @@ class AuthWatcher:
         self.log_paths = [paths.resolve_log_path(p) for p in config.get("log_paths", [])]
         self.sensitive_users = {u.lower() for u in config.get("sensitive_users", [])}
         self.geoip_enabled = config.get("geoip_enabled", True)
+        # 「失敗の連発 → 同一IPからログイン成功」を侵入成功の疑いとしてCRITICAL通知する
+        self.compromise_enabled = config.get("compromise_detection", True)
+        self.compromise_window = config.get("compromise_window_seconds", 3600)
+        self.compromise_min_failures = config.get("compromise_min_failures", 5)
         # ip -> deque[timestamp]
         self._fail_events = defaultdict(deque)
         self._state = self._load_state()
@@ -42,7 +46,7 @@ class AuthWatcher:
                     return json.load(f)
             except (OSError, json.JSONDecodeError):
                 pass
-        return {"offsets": {}, "journal_cursor": None, "known_countries": []}
+        return {"offsets": {}, "journal_cursor": None, "known_countries": [], "recent_fails": {}}
 
     def _location_suffix(self, ip: str) -> str:
         if not self.geoip_enabled:
@@ -89,6 +93,49 @@ class AuthWatcher:
         if not known or country in known:
             return None
         return geoip.format_location(info)
+
+    def _record_failure(self, ip: str, user: str, now: float):
+        """侵入成功の相関検知用に、IPごとの失敗ログイン履歴（時刻とユーザー名）を保持する。
+        ブルートフォース検知用のfail_window(既定5分)より長い窓で持つ。"""
+        history = self._state.setdefault("recent_fails", {})
+        entries = history.setdefault(ip, [])
+        entries.append([now, user])
+        # 1IPあたりの肥大化防止（直近分だけ残す）
+        del entries[:-200]
+
+    def _prune_failures(self, now: float):
+        history = self._state.setdefault("recent_fails", {})
+        for ip in list(history):
+            history[ip] = [e for e in history[ip] if now - e[0] <= self.compromise_window]
+            if not history[ip]:
+                del history[ip]
+        # IP数の上限（分散型ブルートフォースで状態ファイルが肥大化しないように）
+        if len(history) > 2000:
+            newest = sorted(history, key=lambda k: history[k][-1][0], reverse=True)[:2000]
+            self._state["recent_fails"] = {k: history[k] for k in newest}
+
+    def _check_compromise(self, ip: str, user: str, method: str, now: float):
+        """同一IPからの失敗が窓内にcompromise_min_failures回以上あった後にログインが
+        成功した場合、認証突破（侵入成功）の疑いとしてCRITICALを返す。該当しなければFalse。
+        一度通知したらそのIPの履歴は消し、同じ攻撃で連続して再通知しない。"""
+        if not self.compromise_enabled:
+            return False
+        history = self._state.setdefault("recent_fails", {})
+        entries = [e for e in history.get(ip, []) if now - e[0] <= self.compromise_window]
+        if len(entries) < self.compromise_min_failures:
+            return False
+        tried = sorted({e[1] for e in entries})
+        tried_text = ",".join(tried[:5]) + ("…" if len(tried) > 5 else "")
+        history.pop(ip, None)
+        self.notifier.alert(
+            "auth_watch",
+            f"侵入成功の疑い: ブルートフォース後にログイン成功: user={user} from={ip} method={method} "
+            f"（直前{self.compromise_window // 60}分間に{len(entries)}回失敗、試行ユーザー: {tried_text}）"
+            f"{self._location_suffix(ip)}",
+            "critical",
+            allow_ai_dismiss=False,
+        )
+        return True
 
     def _save_state(self):
         os.makedirs(os.path.dirname(STATE_PATH), exist_ok=True)
@@ -151,6 +198,7 @@ class AuthWatcher:
             ip = m.group("ip")
             user = m.group("user")
             is_invalid_user = m.group(1) is not None  # "invalid user " prefix
+            self._record_failure(ip, user, now)
             dq = self._fail_events[ip]
             dq.append(now)
             while dq and now - dq[0] > self.fail_window:
@@ -201,6 +249,10 @@ class AuthWatcher:
         if m:
             ip = m.group("ip")
             unusual = self._check_unusual_location(ip)
+            # 相関検知が成立した場合は、見慣れない国のCRITICALと二重に出さずこちらに統合する
+            # （場所の情報はメッセージ末尾に含まれる）
+            if self._check_compromise(ip, m.group("user"), m.group("method"), now):
+                return
             if unusual:
                 self.notifier.alert(
                     "auth_watch",
@@ -228,4 +280,5 @@ class AuthWatcher:
             for line in lines:
                 self._process_line(line)
         finally:
+            self._prune_failures(time.time())
             self._save_state()
