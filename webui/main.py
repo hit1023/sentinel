@@ -1355,7 +1355,8 @@ def _attack_hud(hours: float = 24) -> dict:
         ).fetchall()]
         critical_1h = conn.execute(
             "SELECT COUNT(*) FROM alerts WHERE epoch > ? AND severity = 'critical'"
-            " AND category NOT IN ('heartbeat')",
+            # 脆弱性照合のCRITICALは「未更新の常設リスク」でHUDのKEV件数・CAUTIONで表す。死活は別枠
+            " AND category NOT IN ('heartbeat', 'vuln_watch')",
             (now - 3600,),
         ).fetchone()[0]
     if now - _kev_cache["at"] > 300:  # 脆弱性の集計は重いので5分キャッシュ
