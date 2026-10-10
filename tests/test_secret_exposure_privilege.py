@@ -131,6 +131,16 @@ class SecretWatchTests(unittest.TestCase):
         os.chmod(env, 0o600)
         self.assertEqual(secretscan.permission_findings(str(self.repo)), [])
 
+    def test_unreadable_root_reports_reason_and_retries_in_an_hour(self):
+        n = Notifier()
+        w = secret_watch.SecretWatcher({"enabled": True, "scan_roots": [str(Path(self.tmp.name) / "nope")], "interval_hours": 24}, n)
+        w.check(force=True)
+        self.assertEqual(n.alerts[0][2], "error")
+        self.assertIn("アクセスできません", n.alerts[0][1])
+        self.assertLess(w._state["last_run"] + 24 * 3600 - __import__("time").time(), 3700)  # 次回は約1時間後
+        denied = secret_watch.SecretWatcher._access_error([("/Volumes/X", PermissionError(1, "Operation not permitted"))])
+        self.assertIn("フルディスクアクセス", denied)
+
     def test_placeholders_and_url_slugs_are_not_flagged(self):
         line = 'API_KEY = "your-api-key-here-xxxxxxxxxxxxxxxx"'
         self.assertEqual(secretscan.scan_line(line), [])

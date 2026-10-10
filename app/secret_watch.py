@@ -45,6 +45,20 @@ class SecretWatcher:
             json.dump(self._state, f)
         os.replace(tmp, STATE_PATH)
 
+    @staticmethod
+    def _access_error(problems):
+        if not problems:
+            return "走査対象にgitリポジトリが見つかりません。scan_roots（SECRET_WATCH_ROOTS）の場所を確認してください"
+        detail = "; ".join(f"{root}（{e.strerror or e}）" for root, e in problems[:3])
+        msg = f"走査場所にアクセスできません: {detail}。"
+        if any(getattr(e, "errno", None) in (1, 13) for _, e in problems):  # EPERM / EACCES
+            msg += ("macOSでは、外付けディスクや書類フォルダへのアクセスに許可が必要です。"
+                    "システム設定 → プライバシーとセキュリティ → フルディスクアクセス に /opt/sentinel/sentinel-agent を追加してください。"
+                    "（1時間ごとに再試行します）")
+        else:
+            msg += "パスが存在するか確認してください。（1時間ごとに再試行します）"
+        return msg
+
     def _notify_repo(self, repo, findings, first_run):
         high = [f for f in findings if f["rule"] in secretscan.HIGH_CONFIDENCE]
         perms = [f for f in findings if f["rule"] == "world-readable-secret-file"]
@@ -68,14 +82,20 @@ class SecretWatcher:
         now = time.time()
         if not force and now - self._state.get("last_run", 0) < self.interval:
             return
-        repos = []
+        repos, problems = [], []
         for root in self.roots:
+            try:
+                os.listdir(root)  # 存在しない・権限がない場合は、理由を取るために実際に開いてみる
+            except OSError as e:
+                problems.append((root, e))
+                continue
             repos += secretscan.find_repos(root)
         if self.roots and not repos:
             if not self._missing_reported:
-                self.notifier.alert("secret_watch", "走査対象のgitリポジトリが見つかりません。scan_rootsを確認してください", "error")
+                self.notifier.alert("secret_watch", self._access_error(problems), "error")
                 self._missing_reported = True
-            self._state["last_run"] = now
+            # 失敗のまま24時間待たず、1時間後に再試行する（権限を付与した後に早く動き出すように）
+            self._state["last_run"] = now - self.interval + min(self.interval, HOUR)
             self._save_state()
             return
         self._missing_reported = False
