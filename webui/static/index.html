@@ -6,7 +6,7 @@
 <title>SENTINEL // hit-linux-ids</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="style.css?v=20261011a">
+<link rel="stylesheet" href="style.css?v=20261012a">
 </head>
 <body>
 <canvas id="netCanvas"></canvas>
@@ -70,6 +70,7 @@
       <span class="modal-tab active" data-tab="ssh-whitelist">🔐 SSH許可リスト</span>
       <span class="modal-tab" data-tab="email-notify">🔔 メール通知</span>
       <span class="modal-tab" data-tab="slack-notify">💬 Slack・死活監視</span>
+      <span class="modal-tab" data-tab="abuse-report">🚨 通報(AbuseIPDB)</span>
       <span class="modal-tab" data-tab="download">⬇ ダウンロード</span>
     </div>
     <div class="modal-body">
@@ -149,6 +150,26 @@
             <span class="mini-btn" id="saveDailyReportBtn">保存</span>
             <span class="mini-btn" id="testDailyReportBtn">テスト送信</span>
             <span class="mono-dim" id="dailyReportStatus"></span>
+          </div>
+        </div>
+      </div>
+
+      <div class="modal-tab-panel" id="tab-abuse-report" style="display:none;">
+        <p class="mono-dim" style="margin:0 0 12px;">
+          攻撃元のIPを <a href="https://www.abuseipdb.com/" target="_blank" rel="noopener" style="color:var(--neon-cyan);">AbuseIPDB</a>
+          へ通報できるようにします。候補は画面の「ABUSEIPDB」パネルに出ますが、<b>送信は、内容を確認して「通報する」を押した時だけ</b>です（自動では送りません）。
+          送るのは、攻撃元のIP・攻撃の種類・時刻・短い英文コメントだけで、自分のホスト名等は含みません。
+        </p>
+        <div class="settings-form">
+          <label class="settings-label">APIキー（登録済みの場合は末尾のみ表示。変更する時だけ入力）</label>
+          <input type="password" id="abuseApiKey" placeholder="AbuseIPDBのAPIキー" autocomplete="off">
+          <span class="mono-dim" id="abuseKeyMasked" style="font-size:11px;"></span>
+          <label class="settings-label">通報候補にする最低回数（24時間以内の検知回数。3以上）</label>
+          <input type="number" id="abuseMinEvents" min="3" max="1000" value="5">
+          <div class="settings-actions">
+            <span class="mini-btn" id="saveAbuseBtn">保存</span>
+            <span class="mini-btn" id="testAbuseBtn">キーを確認（通報はしません）</span>
+            <span class="mono-dim" id="abuseStatus"></span>
           </div>
         </div>
       </div>
@@ -457,6 +478,22 @@
     </div>
   </section>
 
+  <section class="vuln-row">
+    <div class="panel vuln-panel" id="abusePanel">
+      <div class="panel-head">
+        <span>ABUSEIPDB（攻撃元の通報候補）</span>
+        <span class="vuln-head-right"><span class="mono-dim" id="abuseSummary">--</span></span>
+      </div>
+      <div class="vuln-table-wrap">
+        <table class="vuln-table">
+          <thead><tr><th>IP</th><th>国 / ネットワーク</th><th>種類</th><th>回数(24h)</th><th>最終</th><th>通報</th></tr></thead>
+          <tbody id="abuseTbody"></tbody>
+        </table>
+      </div>
+      <div class="mono-dim" style="font-size:11px;margin-top:8px;">送信は「通報する」を押した時だけです。研究目的のスキャナーは候補から除いています。キーの設定は ⚙設定 → 🚨通報。</div>
+    </div>
+  </section>
+
   <section class="mid-grid" style="margin-bottom:18px;">
     <div class="panel heatmap-panel">
       <div class="panel-head"><span>24H ACTIVITY HEATMAP（1時間単位・ホスト別）</span></div>
@@ -504,12 +541,12 @@
 
 </main>
 
-<script src="netbg.js?v=20261011a"></script>
-<script src="app.js?v=20261011a"></script>
+<script src="netbg.js?v=20261012a"></script>
+<script src="app.js?v=20261012a"></script>
 <!-- ATTACK MAP用: 地図投影(d3-geo)と世界地図データの展開(topojson) -->
 <script src="https://cdn.jsdelivr.net/npm/d3-array@3"></script>
 <script src="https://cdn.jsdelivr.net/npm/d3-geo@3"></script>
 <script src="https://cdn.jsdelivr.net/npm/topojson-client@3"></script>
-<script src="attackmap.js?v=20261011a"></script>
+<script src="attackmap.js?v=20261012a"></script>
 </body>
 </html>

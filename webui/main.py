@@ -18,6 +18,7 @@ from email.message import EmailMessage
 from fastapi import BackgroundTasks, FastAPI, Header, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
 
+import abuseipdb
 import attackmap
 import exposure
 import playbooks
@@ -110,6 +111,18 @@ def _init_db():
             CREATE TABLE IF NOT EXISTS app_settings (
                 key TEXT PRIMARY KEY,
                 value TEXT
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS abuse_reports (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                ip TEXT NOT NULL,
+                reported_at REAL NOT NULL,
+                categories TEXT,
+                event_count INTEGER,
+                score INTEGER
             )
             """
         )
@@ -1609,6 +1622,113 @@ def api_attack_map(hours: float = 24, since: float | None = None, scope: str = "
         return {"events": data["events"], "home": data["home"]}
     data["hud"] = _attack_hud(max(hours, 1) if hours else 24)
     return data
+
+
+# --- AbuseIPDB への通報（候補を出し、人が確認して押した時だけ送る） ---
+def _abuse_min_events() -> int:
+    try:
+        return max(1, int(_get_app_setting("abuseipdb_min_events") or abuseipdb.DEFAULT_MIN_EVENTS))
+    except ValueError:
+        return abuseipdb.DEFAULT_MIN_EVENTS
+
+
+def _abuse_candidates(hours: int = 24) -> list[dict]:
+    now = time.time()
+    cats = attackmap.SCOPE_CATEGORIES["ssh"] + attackmap.SCOPE_CATEGORIES["web"]
+    with _db_connect() as conn:
+        rows = [dict(r) for r in conn.execute(
+            f"SELECT * FROM alerts WHERE category IN ({','.join('?' * len(cats))}) AND epoch > ? AND ai_dismissed = 0"
+            " AND severity IN ('critical', 'warning') ORDER BY epoch ASC",
+            (*cats, now - hours * 3600),
+        ).fetchall()]
+        reported = {r["ip"] for r in conn.execute("SELECT ip FROM abuse_reports WHERE reported_at > ?", (now - 86400,)).fetchall()}
+    per_ip: dict[str, dict] = {}
+    for e in attack_map._events(rows):
+        if e["kind"] not in abuseipdb.CATEGORIES:
+            continue  # 不審ログイン成功・外向き通信・Web成功応答などは通報の対象にしない
+        s = per_ip.setdefault(e["ip"], {"ip": e["ip"], "count": 0, "kinds": {}, "last_epoch": 0})
+        s["count"] += 1
+        s["kinds"][e["kind"]] = s["kinds"].get(e["kind"], 0) + 1
+        s["last_epoch"] = max(s["last_epoch"], e["epoch"] or 0)
+    cands = [s for s in per_ip.values() if s["count"] >= _abuse_min_events() and s["ip"] not in reported]
+    geo = attack_map._geo({c["ip"] for c in cands})
+    asn = publicfeed.lookup_asn(_db_connect, set(geo))
+    out = []
+    for c in cands:
+        if publicfeed.is_benign_scanner(asn.get(c["ip"])):
+            continue  # 研究目的のスキャナーは通報しない
+        g, a = geo.get(c["ip"], {}), asn.get(c["ip"], {})
+        out.append({**c, "country": g.get("country", ""), "cc": g.get("country_code", ""), "asn": a.get("asn", ""),
+                    "network": a.get("name", ""), "categories": abuseipdb.categories_for(c["kinds"]),
+                    "comment": abuseipdb.build_comment(c["count"], c["kinds"], hours)})
+    return sorted(out, key=lambda c: -c["count"])
+
+
+@app.get("/api/abuseipdb-settings")
+def api_get_abuse_settings():
+    key = _get_app_setting("abuseipdb_api_key")
+    return {"configured": bool(key), "key_masked": f"…{key[-4:]}" if key else "", "min_events": _abuse_min_events()}
+
+
+@app.post("/api/abuseipdb-settings")
+async def api_set_abuse_settings(payload: dict):
+    if "api_key" in payload:
+        key = (payload["api_key"] or "").strip()
+        if key and not (20 <= len(key) <= 200 and key.isalnum()):
+            raise HTTPException(status_code=400, detail="APIキーの形式が正しくありません")
+        _set_app_setting("abuseipdb_api_key", key)
+    if "min_events" in payload:
+        try:
+            n = int(payload["min_events"])
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=400, detail="回数は整数で指定してください")
+        _set_app_setting("abuseipdb_min_events", str(min(max(n, 3), 1000)))
+    return {"ok": True, "settings": api_get_abuse_settings()}
+
+
+@app.post("/api/abuseipdb-settings/test")
+async def api_test_abuse_settings():
+    key = _get_app_setting("abuseipdb_api_key")
+    if not key:
+        raise HTTPException(status_code=400, detail="APIキーが未設定です")
+    try:
+        return await asyncio.to_thread(abuseipdb.check_key, key)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.get("/api/abuse-candidates")
+def api_abuse_candidates():
+    with _db_connect() as conn:
+        done_24h = conn.execute("SELECT COUNT(*) FROM abuse_reports WHERE reported_at > ?", (time.time() - 86400,)).fetchone()[0]
+        total = conn.execute("SELECT COUNT(*) FROM abuse_reports").fetchone()[0]
+    return {"configured": bool(_get_app_setting("abuseipdb_api_key")), "min_events": _abuse_min_events(),
+            "reported_24h": done_24h, "reported_total": total, "candidates": _abuse_candidates()[:100]}
+
+
+@app.post("/api/abuse-report")
+async def api_abuse_report(payload: dict):
+    """人が確認して押した時だけ送る。対象IPは、画面から渡された値を信用せず、サーバー側で候補を再計算して照合する。"""
+    key = _get_app_setting("abuseipdb_api_key")
+    if not key:
+        raise HTTPException(status_code=400, detail="APIキーが未設定です")
+    ip = (payload.get("ip") or "").strip()
+    cand = next((c for c in await asyncio.to_thread(_abuse_candidates) if c["ip"] == ip), None)
+    if not cand:
+        raise HTTPException(status_code=400, detail="通報の対象ではありません（回数不足・通報済み・対象外のIP）")
+    with _db_connect() as conn:
+        n_today = conn.execute("SELECT COUNT(*) FROM abuse_reports WHERE reported_at > ?", (time.time() - 86400,)).fetchone()[0]
+    if n_today >= abuseipdb.MAX_REPORTS_PER_DAY:
+        raise HTTPException(status_code=429, detail=f"1日の通報は{abuseipdb.MAX_REPORTS_PER_DAY}件までです")
+    ts = time.strftime("%Y-%m-%dT%H:%M:%S+00:00", time.gmtime(cand["last_epoch"]))
+    try:
+        data = await asyncio.to_thread(abuseipdb.report_ip, key, ip, cand["categories"], cand["comment"], ts)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    with _db_connect() as conn:
+        conn.execute("INSERT INTO abuse_reports (ip, reported_at, categories, event_count, score) VALUES (?, ?, ?, ?, ?)",
+                     (ip, time.time(), ",".join(map(str, cand["categories"])), cand["count"], data.get("abuseConfidenceScore")))
+    return {"ok": True, "score": data.get("abuseConfidenceScore")}
 
 
 @app.get("/api/public-feed")
