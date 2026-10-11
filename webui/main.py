@@ -21,6 +21,7 @@ from fastapi.staticfiles import StaticFiles
 import attackmap
 import exposure
 import playbooks
+import publicfeed
 import vuln
 
 # コンテナはTZ設定に関わらずUTCで動くことが多いため、表示・保存する時刻は
@@ -1608,6 +1609,26 @@ def api_attack_map(hours: float = 24, since: float | None = None, scope: str = "
         return {"events": data["events"], "home": data["home"]}
     data["hud"] = _attack_hud(max(hours, 1) if hours else 24)
     return data
+
+
+@app.get("/api/public-feed")
+def api_public_feed():
+    """外部（s-quad.com等）へ公開してよい形に加工した脅威フィード。内部の詳細は含めない（publicfeed.py参照）。"""
+    now = time.time()
+    since = now - (publicfeed.WINDOW_HOURS + 2) * 3600
+    cats = ",".join("?" * len(attackmap.SCOPE_CATEGORIES["ssh"] + attackmap.SCOPE_CATEGORIES["web"]))
+    with _db_connect() as conn:
+        # AIが格下げした・許可リスト/抑制ルールで静めたものは「攻撃」として出さない
+        rows = [dict(r) for r in conn.execute(
+            f"SELECT * FROM alerts WHERE category IN ({cats}) AND epoch > ? AND ai_dismissed = 0"
+            " AND severity IN ('critical', 'warning') ORDER BY epoch ASC",
+            (*attackmap.SCOPE_CATEGORIES["ssh"], *attackmap.SCOPE_CATEGORIES["web"], since),
+        ).fetchall()]
+    events = attack_map._events(rows)
+    ips = {e["ip"] for e in events if e["kind"] in publicfeed.PUBLIC_KINDS}
+    geo = attack_map._geo(ips)
+    asn = publicfeed.lookup_asn(_db_connect, set(geo))
+    return publicfeed.build(events, geo, asn, now)
 
 
 _kev_cache = {"at": 0.0, "n": 0}
