@@ -1574,3 +1574,44 @@ document.getElementById("secretsTbody").addEventListener("click", async (e) => {
 });
 loadSecrets();
 setInterval(loadSecrets, 60000);
+
+// --- 地図以外のパネルを、フィードと同じ信号機ドット付きヘッダーで折りたためるようにする ---
+function initPanelCollapse() {
+  const SKIP = ".attack-panel, .feed-panel";
+  let stored = {};
+  try { stored = JSON.parse(localStorage.getItem("sentinelPanelCollapsed") || "{}"); } catch (e) { /* 使えなくても動かす */ }
+  const save = () => { try { localStorage.setItem("sentinelPanelCollapsed", JSON.stringify(stored)); } catch (e) { /* ignore */ } };
+
+  document.querySelectorAll(".panel").forEach((panel) => {
+    if (panel.matches(SKIP)) return;
+    panel.querySelectorAll(":scope > .panel-head").forEach((head) => {
+      const title = (head.querySelector("span")?.textContent || "").trim();
+      if (!title) return;
+      head.classList.add("collapsible");
+      head.title = "クリックで折りたたみ/展開";
+      head.insertAdjacentHTML("afterbegin",
+        '<span class="panel-dots"><span class="term-dot dot-red"></span><span class="term-dot dot-amber"></span><span class="term-dot dot-green"></span></span>');
+      head.insertAdjacentHTML("beforeend", '<span class="panel-chevron">▾</span>');
+
+      const body = () => {
+        const els = [];
+        for (let el = head.nextElementSibling; el && !el.classList.contains("panel-head"); el = el.nextElementSibling) els.push(el);
+        return els;
+      };
+      const apply = (collapsed) => {
+        head.classList.toggle("sec-collapsed", collapsed);
+        body().forEach((el) => el.classList.toggle("sec-hidden", collapsed));
+        panel.classList.toggle("has-collapsed", !!panel.querySelector(".sec-collapsed"));
+      };
+      if (stored[title]) apply(true);
+      head.addEventListener("click", (e) => {
+        if (e.target.closest("button, input, select, label, a, .mini-btn")) return;
+        const collapsed = !head.classList.contains("sec-collapsed");
+        apply(collapsed);
+        if (collapsed) stored[title] = 1; else delete stored[title];
+        save();
+      });
+    });
+  });
+}
+initPanelCollapse();

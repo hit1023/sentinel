@@ -1115,3 +1115,13 @@ body.alert-critical .topbar {
   .stat-row { grid-template-columns: repeat(2, 1fr); }
   .main-grid { grid-template-columns: 1fr; }
 }
+
+/* --- 地図以外のパネルの折りたたみ（信号機ドットのヘッダーをクリック） --- */
+.panel-head.collapsible { cursor: pointer; user-select: none; justify-content: flex-start; gap: 6px; }
+.panel-head.collapsible .panel-dots { display: inline-flex; gap: 6px; margin-right: 8px; }
+.panel-head.collapsible .vuln-head-right { margin-left: auto; }
+.panel-head.collapsible .panel-chevron { margin-left: auto; color: var(--text-dim); transition: transform 0.2s ease; }
+.panel-head.collapsible .vuln-head-right + .panel-chevron { margin-left: 10px; }
+.panel-head.collapsible.sec-collapsed .panel-chevron { transform: rotate(-90deg); }
+.sec-hidden { display: none !important; }
+.panel.has-collapsed { min-height: 0; }
