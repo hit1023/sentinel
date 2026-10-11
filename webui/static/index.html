@@ -437,6 +437,25 @@
     </div>
   </section>
 
+  <section class="vuln-row">
+    <div class="panel vuln-panel" id="secretsPanel">
+      <div class="panel-head">
+        <span>SECRETS（秘密情報の混入・権限）</span>
+        <span class="vuln-head-right">
+          <span class="mono-dim" id="secretsSummary">--</span>
+          <label class="mono-dim"><input type="checkbox" id="secretsShowAcked"> 対応済みも表示</label>
+        </span>
+      </div>
+      <div class="vuln-table-wrap">
+        <table class="vuln-table">
+          <thead><tr><th>優先度</th><th>HOST</th><th>REPO</th><th>内容</th><th>検知</th><th>対応</th></tr></thead>
+          <tbody id="secretsTbody"></tbody>
+        </table>
+      </div>
+      <div class="mono-dim" style="font-size:11px;margin-top:8px;">値そのものは表示しません。🧭 対応で手順を確認し、鍵の失効などを済ませたら「対応済み」にしてください（作業は人間が行います）。</div>
+    </div>
+  </section>
+
   <section class="mid-grid" style="margin-bottom:18px;">
     <div class="panel heatmap-panel">
       <div class="panel-head"><span>24H ACTIVITY HEATMAP（1時間単位・ホスト別）</span></div>

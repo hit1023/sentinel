@@ -1540,3 +1540,37 @@ setInterval(loadStats, 3000);
 loadVulns();
 // 照合結果は数百〜数千件になりうる一方、更新は1日数回程度なので低頻度で十分
 setInterval(loadVulns, 300000);
+
+// --- SECRETS（秘密情報）パネル ---
+async function loadSecrets() {
+  try {
+    const d = await (await fetch("/api/secrets")).json();
+    const showAcked = document.getElementById("secretsShowAcked").checked;
+    const rows = d.items.filter((i) => showAcked || !i.acked);
+    const sum = document.getElementById("secretsSummary");
+    sum.innerHTML = `未対応 <b style="color:${d.open_critical ? "var(--crit, #ff4d6d)" : "inherit"}">CRITICAL ${d.open_critical}</b> / WARNING ${d.open_warning}（対応済み ${d.acked}）`;
+    const tbody = document.getElementById("secretsTbody");
+    tbody.innerHTML = rows.length ? rows.map((i) => {
+      const sev = i.severity === "critical" ? '<span class="vuln-pill p-high">CRITICAL</span>' : '<span class="vuln-pill p-mid">WARNING</span>';
+      const kinds = i.kinds.map((k) => `${escapeHtml(k.label)}×${k.count}`).join(" / ") + (i.history ? " <span class=\"mono-dim\">(履歴)</span>" : "");
+      const act = i.acked
+        ? `<span class="mini-btn secret-unack" data-id="${i.id}">未対応に戻す</span>`
+        : `<span class="mini-btn secret-guide" data-id="${i.id}">🧭 対応</span> <span class="mini-btn secret-ack" data-id="${i.id}">対応済み</span>`;
+      return `<tr${i.acked ? ' style="opacity:.5"' : ""}><td>${sev}</td><td>${escapeHtml(i.host)}</td><td>${escapeHtml(i.repo)}</td><td>${kinds}</td><td class="mono-dim">${escapeHtml(i.timestamp)}</td><td>${act}</td></tr>`;
+    }).join("") : '<tr><td colspan="6" class="mono-dim">未対応の秘密情報はありません</td></tr>';
+  } catch (err) {
+    console.error("秘密情報の取得に失敗", err);
+  }
+}
+document.getElementById("secretsShowAcked").addEventListener("change", loadSecrets);
+document.getElementById("secretsTbody").addEventListener("click", async (e) => {
+  const t = e.target.closest("[data-id]");
+  if (!t) return;
+  const id = t.dataset.id;
+  if (t.classList.contains("secret-guide")) return openAlertGuide(id);
+  if (t.classList.contains("secret-ack")) await fetch(`/api/secrets/${id}/ack`, { method: "POST" });
+  if (t.classList.contains("secret-unack")) await fetch(`/api/secrets/${id}/ack`, { method: "DELETE" });
+  loadSecrets();
+});
+loadSecrets();
+setInterval(loadSecrets, 60000);

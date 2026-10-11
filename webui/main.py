@@ -114,6 +114,14 @@ def _init_db():
         )
         conn.execute(
             """
+            CREATE TABLE IF NOT EXISTS secret_ack (
+                alert_id TEXT PRIMARY KEY,
+                acked_at REAL NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            """
             CREATE TABLE IF NOT EXISTS alert_advice (
                 alert_id TEXT PRIMARY KEY,
                 text TEXT NOT NULL,
@@ -710,8 +718,22 @@ def _read_alerts(limit: int = 200):
     return records
 
 
+ALERTS_MAX_BYTES = int(os.environ.get("ALERTS_JSONL_MAX_MB", "100")) * 1024 * 1024
+
+
+def _rotate_alerts_if_needed():
+    """alerts.jsonlが上限を超えたら .1 に退避して新しく始める（無制限に肥大化させない）。
+    CRITICAL/WARNINGはSQLiteに残るため、退避されるのは主にINFOの履歴。世代は1つだけ保持する。"""
+    try:
+        if os.path.getsize(ALERTS_JSONL) > ALERTS_MAX_BYTES:
+            os.replace(ALERTS_JSONL, ALERTS_JSONL + ".1")
+    except OSError:
+        pass
+
+
 def _append_alert(record: dict):
     os.makedirs(os.path.dirname(ALERTS_JSONL), exist_ok=True)
+    _rotate_alerts_if_needed()
     with open(ALERTS_JSONL, "a", encoding="utf-8") as f:
         f.write(json.dumps(record, ensure_ascii=False) + "\n")
 
@@ -1362,6 +1384,64 @@ def api_alerts(limit: int = 200, host: str | None = None):
     if host:
         alerts = [a for a in alerts if a.get("host") == host][-limit:]
     return {"alerts": list(reversed(alerts))}
+
+
+SECRET_REPO_RE = re.compile(r"repo=(\S+)")
+SECRET_BREAKDOWN_RE = re.compile(r"[（(]([^）)]*×\d+[^）)]*)[）)]")
+SECRET_RULE_LABELS = {
+    "aws-access-key": "AWSアクセスキー", "slack-webhook": "Slack Webhook", "world-readable-secret-file": "秘密ファイルが他ユーザーから読める",
+    "url-with-password": "パスワード入りURL", "generic-secret": "汎用シークレット", "private-key": "秘密鍵",
+}
+
+
+@app.get("/api/secrets")
+def api_secrets(days: int = 90):
+    """secret_watchの検知を「対応が必要な課題」として一覧にする（アラートは流れて埋もれるため）。
+    値そのものは元アラートにも含まれていない。対応済みはユーザーが手動で付ける。"""
+    since = time.time() - max(days, 1) * 86400
+    with _db_connect() as conn:
+        rows = conn.execute(
+            "SELECT a.*, s.acked_at FROM alerts a LEFT JOIN secret_ack s ON s.alert_id = a.id "
+            "WHERE a.category = 'secret_watch' AND a.epoch >= ? ORDER BY a.epoch DESC LIMIT 500",
+            (since,),
+        ).fetchall()
+    items = []
+    for r in rows:
+        msg = r["message"] or ""
+        m = SECRET_REPO_RE.search(msg)
+        b = SECRET_BREAKDOWN_RE.search(msg)
+        kinds = []
+        if b:
+            for part in b.group(1).split(","):
+                rule, _, n = part.strip().partition("×")
+                kinds.append({"rule": rule, "label": SECRET_RULE_LABELS.get(rule, rule), "count": int(n or 1)})
+        sev = (r["original_severity"] or r["severity"] or "").lower()
+        items.append({
+            "id": r["id"], "timestamp": r["timestamp"], "host": r["host"], "severity": sev,
+            "repo": m.group(1) if m else "", "kinds": kinds, "message": msg,
+            "history": "@" in msg, "acked": bool(r["acked_at"]), "acked_at": r["acked_at"],
+        })
+    open_items = [i for i in items if not i["acked"]]
+    return {
+        "items": items,
+        "open_critical": sum(1 for i in open_items if i["severity"] == "critical"),
+        "open_warning": sum(1 for i in open_items if i["severity"] != "critical"),
+        "acked": len(items) - len(open_items),
+    }
+
+
+@app.post("/api/secrets/{alert_id}/ack")
+def api_secret_ack(alert_id: str):
+    with _db_connect() as conn:
+        conn.execute("INSERT OR REPLACE INTO secret_ack (alert_id, acked_at) VALUES (?, ?)", (alert_id, time.time()))
+    return {"ok": True}
+
+
+@app.delete("/api/secrets/{alert_id}/ack")
+def api_secret_unack(alert_id: str):
+    with _db_connect() as conn:
+        conn.execute("DELETE FROM secret_ack WHERE alert_id = ?", (alert_id,))
+    return {"ok": True}
 
 
 @app.get("/api/alerts/history")
