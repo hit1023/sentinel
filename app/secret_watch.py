@@ -29,6 +29,11 @@ class SecretWatcher:
         self.check_permissions = bool(config.get("check_permissions", True))
         self._state = self._load_state()
         self._missing_reported = False
+        self._force = False
+
+    def request_rescan(self):
+        """WebUIの「再走査」ボタンからの依頼。次のcheck()で間隔に関係なく（履歴も含めて）走査する。"""
+        self._force = True
 
     def _load_state(self):
         try:
@@ -78,10 +83,28 @@ class SecretWatcher:
         # 値が出力に残らないとはいえ、AIの判断で静かにさせたくない（鍵の漏洩は取り返しがつかない）
         self.notifier.alert("secret_watch", msg[:600], severity, allow_ai_dismiss=False)
 
+    def _notify_resolved(self, repo, resolved_n, remaining):
+        """前回まで検知していたものが消えた（対応された）ことを知らせる。WebUIはこれを受けて、
+        同じホスト・リポジトリの古い検知を自動で「対応済み」にする。"""
+        if not remaining:
+            self.notifier.alert("secret_watch", f"解消を確認: repo={repo} 前回の検知{resolved_n}件がすべて解消されました",
+                                "info", allow_ai_dismiss=False)
+            return
+        by_rule = {}
+        for f in remaining:
+            by_rule[f["rule"]] = by_rule.get(f["rule"], 0) + 1
+        breakdown = ", ".join(f"{r}×{n}" for r, n in sorted(by_rule.items(), key=lambda x: -x[1])[:5])
+        high = any(f["rule"] in secretscan.HIGH_CONFIDENCE for f in remaining)
+        self.notifier.alert("secret_watch",
+                            f"一部解消: repo={repo} {resolved_n}件が解消、残り{len(remaining)}件（{breakdown}）",
+                            "critical" if high else "warning", allow_ai_dismiss=False)
+
     def check(self, force: bool = False):
         now = time.time()
+        force = force or self._force
         if not force and now - self._state.get("last_run", 0) < self.interval:
             return
+        self._force = False
         repos, problems = [], []
         for root in self.roots:
             try:
@@ -100,7 +123,7 @@ class SecretWatcher:
             return
         self._missing_reported = False
 
-        history = now - self._state.get("last_history", 0) >= self.history_interval
+        history = force or now - self._state.get("last_history", 0) >= self.history_interval
         first_run = not self._state.get("last_run")
         known = set(self._state.get("known", []))
         for repo in repos:
@@ -111,10 +134,18 @@ class SecretWatcher:
             except Exception as e:  # 1つのリポジトリの失敗で全体を止めない
                 self.notifier.alert("secret_watch", f"走査に失敗: {os.path.basename(repo)}: {e}", "error")
                 continue
+            current = {f["key"] for f in findings}
+            # 履歴を走査しない回は履歴由来の検知が見えないため、解消の判定からは除く（誤って「解消」にしない）
+            prior = {k for k in known if k.startswith(f"{os.path.basename(repo)}|") and (history or "|履歴|" not in k)}
+            resolved = prior - current
             new = [f for f in findings if f["key"] not in known]
             if new:
                 self._notify_repo(os.path.basename(repo), new, first_run)
                 known.update(f["key"] for f in new)
+            if resolved:
+                known -= resolved
+                remaining = [f for f in findings if f["key"] in known]
+                self._notify_resolved(os.path.basename(repo), len(resolved), remaining)
         self._state["known"] = sorted(known)
         self._state["last_run"] = now
         if history:

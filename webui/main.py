@@ -562,6 +562,7 @@ def _process_new_record(record: dict):
     _apply_suppressions(record)
     _append_alert(record)
     _persist_important(record)
+    _resolve_secret_alerts(record)
 
 
 def _load_suppressions() -> list[dict]:
@@ -1201,7 +1202,8 @@ async def ingest_status(payload: dict, authorization: str | None = Header(defaul
     hosts = _read_hosts_status()
     hosts[host] = {**payload, "host": host, "received_at": time.time()}
     _write_hosts_status(hosts)
-    return {"ok": True}
+    # 「再走査」等の依頼は、エージェントが次に状態を送ってきたときの応答で渡す（WebUIから接続しに行かない）
+    return {"ok": True, "commands": sorted(PENDING_COMMANDS.pop(host, set()))}
 
 
 @app.post("/api/ingest/packages")
@@ -1384,6 +1386,36 @@ def api_alerts(limit: int = 200, host: str | None = None):
     if host:
         alerts = [a for a in alerts if a.get("host") == host][-limit:]
     return {"alerts": list(reversed(alerts))}
+
+
+PENDING_COMMANDS: dict[str, set] = {}
+
+
+@app.post("/api/secrets/rescan")
+def api_secrets_rescan():
+    """全ホストのエージェントに、秘密情報の再走査（履歴を含む）を依頼する。
+    依頼を受けたエージェントは、次の状態送信（約1分以内）で走査を始める。"""
+    hosts = list(_read_hosts_status().keys())
+    for h in hosts:
+        PENDING_COMMANDS.setdefault(h, set()).add("secret_rescan")
+    return {"ok": True, "hosts": hosts}
+
+
+def _resolve_secret_alerts(record: dict):
+    """エージェントが「解消を確認」「一部解消」を通知したら、同じホスト・リポジトリの古い検知を対応済みにする。"""
+    msg = record.get("message") or ""
+    if record.get("category") != "secret_watch" or not msg.startswith(("解消を確認", "一部解消")):
+        return
+    m = SECRET_REPO_RE.search(msg)
+    if not m:
+        return
+    repo, host, my_id = m.group(1), record.get("host"), record.get("id")
+    with _db_connect() as conn:
+        rows = conn.execute("SELECT id, message FROM alerts WHERE category = 'secret_watch' AND host = ?", (host,)).fetchall()
+        for r in rows:
+            rm = SECRET_REPO_RE.search(r["message"] or "")
+            if rm and rm.group(1) == repo and r["id"] != my_id and not (r["message"] or "").startswith("解消を確認"):
+                conn.execute("INSERT OR REPLACE INTO secret_ack (alert_id, acked_at) VALUES (?, ?)", (r["id"], time.time()))
 
 
 SECRET_REPO_RE = re.compile(r"repo=(\S+)")

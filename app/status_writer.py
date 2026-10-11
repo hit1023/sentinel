@@ -48,7 +48,7 @@ def report_status(central_config: dict):
     （ステータス更新の失敗で監視ループ自体を止めない）。"""
     resolved = central_config_mod.resolve(central_config)
     if not resolved["enabled"] or not resolved["webui_url"]:
-        return
+        return []
 
     snapshot = build_snapshot()
     snapshot["host"] = resolved["host_label"]
@@ -65,6 +65,9 @@ def report_status(central_config: dict):
     req = urllib.request.Request(url, data=data, headers=headers, method="POST")
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
-            resp.read()
-    except (urllib.error.URLError, TimeoutError, OSError) as e:
+            body = resp.read()
+        # WebUIからの依頼（「再走査」ボタン等）が応答に載ってくる。古いWebUIは何も返さない
+        return [c for c in (json.loads(body or b"{}").get("commands") or []) if isinstance(c, str)]
+    except (urllib.error.URLError, TimeoutError, OSError, ValueError) as e:
         print(f"中央WebUIへのステータス送信に失敗: {e}", flush=True)
+    return []

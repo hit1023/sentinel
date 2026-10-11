@@ -1615,3 +1615,17 @@ function initPanelCollapse() {
   });
 }
 initPanelCollapse();
+
+document.getElementById("secretsRescanBtn").addEventListener("click", async () => {
+  const btn = document.getElementById("secretsRescanBtn");
+  btn.textContent = "依頼中…";
+  try {
+    const d = await (await fetch("/api/secrets/rescan", { method: "POST" })).json();
+    btn.textContent = `依頼しました（${d.hosts.length}台）`;
+    // エージェントは次の状態送信（約1分以内）で走査する。結果が反映されるころに何度か再取得する
+    [20000, 60000, 100000, 150000].forEach((ms) => setTimeout(loadSecrets, ms));
+  } catch (err) {
+    btn.textContent = "失敗しました";
+  }
+  setTimeout(() => { btn.textContent = "再走査"; }, 150000);
+});

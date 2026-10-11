@@ -67,7 +67,15 @@ def main():
                 w.check()
             except Exception as e:  # 1つの監視の異常で全体を落とさない
                 notifier.alert("main", f"{type(w).__name__} でエラー: {e}", "error")
-        report_status(central_config)
+        commands = report_status(central_config)
+        if "secret_rescan" in commands:
+            for w in watchers:
+                if isinstance(w, SecretWatcher):
+                    w.request_rescan()
+                    try:
+                        w.check()
+                    except Exception as e:
+                        notifier.alert("main", f"SecretWatcher の再走査でエラー: {e}", "error")
         updater.maybe_check()
         time.sleep(interval)
 
