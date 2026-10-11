@@ -1786,4 +1786,14 @@ async def _on_startup():
     asyncio.create_task(_exposure_loop())
 
 
+@app.middleware("http")
+async def _no_stale_static(request, call_next):
+    """静的ファイル（index.html/app.js/style.css）は毎回ETagで再検証させる。
+    指定しないとブラウザがヒューリスティックにキャッシュし、デプロイ後も古い画面のまま動いてしまう。"""
+    resp = await call_next(request)
+    if not request.url.path.startswith("/api/"):
+        resp.headers.setdefault("Cache-Control", "no-cache")
+    return resp
+
+
 app.mount("/", StaticFiles(directory=os.path.join(os.path.dirname(__file__), "static"), html=True), name="static")
