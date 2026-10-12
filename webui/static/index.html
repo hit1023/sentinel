@@ -6,7 +6,7 @@
 <title>SENTINEL // hit-linux-ids</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="style.css?v=20261012d">
+<link rel="stylesheet" href="style.css?v=20261012e">
 </head>
 <body>
 <canvas id="netCanvas"></canvas>
@@ -161,7 +161,7 @@
           送るのは、攻撃元のIP・攻撃の種類・時刻・短い英文コメントだけで、自分のホスト名等は含みません。
         </p>
         <div class="settings-form">
-          <label class="settings-label">APIキー（登録済みの場合は末尾のみ表示。変更する時だけ入力）</label>
+          <label class="settings-label">APIキー（セキュリティのため入力欄は空のままです。登録済みかどうかは下に表示。変更する時だけ入力）</label>
           <input type="password" id="abuseApiKey" placeholder="AbuseIPDBのAPIキー" autocomplete="off">
           <span class="mono-dim" id="abuseKeyMasked" style="font-size:11px;"></span>
           <label class="settings-label">通報候補にする最低回数（24時間以内の検知回数。3以上）</label>
@@ -561,12 +561,12 @@
 
 </main>
 
-<script src="netbg.js?v=20261012d"></script>
-<script src="app.js?v=20261012d"></script>
+<script src="netbg.js?v=20261012e"></script>
+<script src="app.js?v=20261012e"></script>
 <!-- ATTACK MAP用: 地図投影(d3-geo)と世界地図データの展開(topojson) -->
 <script src="https://cdn.jsdelivr.net/npm/d3-array@3"></script>
 <script src="https://cdn.jsdelivr.net/npm/d3-geo@3"></script>
 <script src="https://cdn.jsdelivr.net/npm/topojson-client@3"></script>
-<script src="attackmap.js?v=20261012d"></script>
+<script src="attackmap.js?v=20261012e"></script>
 </body>
 </html>

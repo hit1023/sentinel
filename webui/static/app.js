@@ -1640,7 +1640,11 @@ async function loadAbuseSettings() {
     const ab = await (await fetch("/api/auto-block")).json();
     document.getElementById("autoBlockMode").value = ab.mode;
     document.getElementById("autoBlockScore").value = ab.min_score;
-    document.getElementById("abuseKeyMasked").textContent = d.configured ? `登録済み: ${d.key_masked}` : "未登録";
+    // 入力欄は空のまま（キーそのものは画面に出さない）。登録済みかどうかは、入力欄の薄い文字と、下の表示で分かるようにする
+    document.getElementById("abuseApiKey").placeholder = d.configured ? `登録済み（末尾 ${d.key_masked}）。変更する時だけ新しいキーを入力` : "AbuseIPDBのAPIキーを入力";
+    const km = document.getElementById("abuseKeyMasked");
+    km.textContent = d.configured ? `✓ 登録済み（キーの末尾: ${d.key_masked}）` : "✗ 未登録";
+    km.style.color = d.configured ? "var(--neon-green)" : "var(--neon-amber)";
   } catch (e) { console.error("AbuseIPDB設定の取得に失敗", e); }
 }
 document.getElementById("saveAbuseBtn")?.addEventListener("click", async () => {
