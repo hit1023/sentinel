@@ -1668,7 +1668,7 @@ async function loadAutoBlock() {
     const mode = { off: "オフ", dryrun: "試験(ブロックしない)", on: "オン" }[d.mode];
     document.getElementById("autoBlockSummary").textContent = `モード: ${mode} / 24h ブロック ${d.blocked_24h}件・試験 ${d.dryrun_24h}件 / 自分のIP ${d.known_good}件を除外`;
     document.getElementById("autoBlockTbody").innerHTML = d.recent.length ? d.recent.map((r) =>
-      `<tr><td>${escapeHtml(r.ip)}</td><td>${r.score ?? "-"}%</td><td>${r.events ?? "-"}</td><td class="mono-dim">${escapeHtml(new Date(r.at * 1000).toLocaleString("ja-JP", { hour12: false }))}</td><td>${r.dry_run ? '<span class="vuln-pill p-low">試験</span>' : '<span class="vuln-pill p-high">ブロック</span>'}</td></tr>`).join("")
+      `<tr><td>${escapeHtml(r.ip)}</td><td>${r.reason === "reported" ? '<span class="vuln-pill p-mid" title="自分がAbuseIPDBに通報したIP。再び攻撃してきたためブロック">通報済み</span>' + (r.score != null ? ` ${r.score}%` : "") : (r.score != null ? r.score + "%" : "-")}</td><td>${r.events ?? "-"}</td><td class="mono-dim">${escapeHtml(new Date(r.at * 1000).toLocaleString("ja-JP", { hour12: false }))}</td><td>${r.dry_run ? '<span class="vuln-pill p-low">試験</span>' : '<span class="vuln-pill p-high">ブロック</span>'}</td></tr>`).join("")
       : '<tr><td colspan="5" class="mono-dim">まだ自動ブロックはありません</td></tr>';
   } catch (e) { console.error("自動ブロックの取得に失敗", e); }
 }

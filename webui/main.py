@@ -152,6 +152,11 @@ def _init_db():
             """
         )
         conn.execute("CREATE INDEX IF NOT EXISTS idx_auto_blocks_ip ON auto_blocks(ip)")
+        try:  # 理由(reputation=評判が悪い / reported=自分が通報した)。既存のDBには列を足し、過去分は通報履歴から埋める
+            conn.execute("ALTER TABLE auto_blocks ADD COLUMN reason TEXT")
+        except sqlite3.OperationalError:
+            pass
+        conn.execute("UPDATE auto_blocks SET reason = 'reported' WHERE reason IS NULL AND ip IN (SELECT ip FROM abuse_reports)")
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS known_good_ips (
@@ -646,8 +651,9 @@ def _record_blocks(blocks: list[dict], mode: str, now: float):
     if not blocks:
         return
     with _db_connect() as conn:
-        conn.executemany("INSERT INTO auto_blocks (ip, blocked_at, score, events, dry_run) VALUES (?, ?, ?, ?, ?)",
-                         [(b["ip"], now, b.get("score"), b.get("events"), 1 if mode == "dryrun" else 0) for b in blocks])
+        conn.executemany("INSERT INTO auto_blocks (ip, blocked_at, score, events, dry_run, reason) VALUES (?, ?, ?, ?, ?, ?)",
+                         [(b["ip"], now, b.get("score"), b.get("events"), 1 if mode == "dryrun" else 0,
+                           "reported" if b.get("reported") else "reputation") for b in blocks])
     if mode == "on":
         with open(AUTO_BLOCK_FILE, "a", encoding="utf-8") as f:
             for b in blocks:
@@ -733,7 +739,7 @@ def api_auto_block():
         "min_events": _ab_setting_int("auto_block_min_events", autoblock.DEFAULT_MIN_EVENTS, 1, 1000),
         "blocked_24h": n24, "dryrun_24h": d24, "known_good": kg,
         "configured": bool(_get_app_setting("abuseipdb_api_key")),
-        "recent": [{"ip": r["ip"], "at": r["blocked_at"], "score": r["score"], "events": r["events"], "dry_run": bool(r["dry_run"])} for r in recent],
+        "recent": [{"ip": r["ip"], "at": r["blocked_at"], "score": r["score"], "events": r["events"], "dry_run": bool(r["dry_run"]), "reason": r["reason"] or "reputation"} for r in recent],
     }
 
 
@@ -2037,7 +2043,7 @@ async def api_abuse_report(payload: dict):
         with _db_connect() as conn:
             known_good = {r["ip"] for r in conn.execute("SELECT ip FROM known_good_ips").fetchall()}
         if autoblock.pick_targets({ip: 1}, min_events=1, whitelist=[w["entry"] for w in _load_ssh_whitelist()], known_good=known_good, already=set(), limit=1):
-            _record_blocks([{"ip": ip, "score": data.get("abuseConfidenceScore"), "events": cand["count"]}], mode, time.time())
+            _record_blocks([{"ip": ip, "score": data.get("abuseConfidenceScore"), "events": cand["count"], "reported": True}], mode, time.time())
             blocked = mode == "on"
     return {"ok": True, "score": data.get("abuseConfidenceScore"), "blocked": blocked}
 
