@@ -1637,6 +1637,9 @@ async function loadAbuseSettings() {
     document.getElementById("abuseApiKey").value = "";
     document.getElementById("abuseMinEvents").value = d.min_events;
     document.getElementById("abuseCriticalScore").value = d.critical_score;
+    const ab = await (await fetch("/api/auto-block")).json();
+    document.getElementById("autoBlockMode").value = ab.mode;
+    document.getElementById("autoBlockScore").value = ab.min_score;
     document.getElementById("abuseKeyMasked").textContent = d.configured ? `登録済み: ${d.key_masked}` : "未登録";
   } catch (e) { console.error("AbuseIPDB設定の取得に失敗", e); }
 }
@@ -1646,6 +1649,7 @@ document.getElementById("saveAbuseBtn")?.addEventListener("click", async () => {
   if (key) body.api_key = key;  // 入力した時だけ送る（空のまま保存しても登録済みキーを消さない）
   try {
     await postJson("/api/abuseipdb-settings", body);
+    await postJson("/api/auto-block", { mode: document.getElementById("autoBlockMode").value, min_score: document.getElementById("autoBlockScore").value });
     flashStatus("abuseStatus", "保存しました");
     loadAbuseSettings(); loadAbuseCandidates();
   } catch (e) { flashStatus("abuseStatus", `失敗: ${e.message}`, 5000); }
@@ -1658,7 +1662,19 @@ document.getElementById("testAbuseBtn")?.addEventListener("click", async () => {
   } catch (e) { flashStatus("abuseStatus", `失敗: ${e.message}`, 6000); }
 });
 
+async function loadAutoBlock() {
+  try {
+    const d = await (await fetch("/api/auto-block")).json();
+    const mode = { off: "オフ", dryrun: "試験(ブロックしない)", on: "オン" }[d.mode];
+    document.getElementById("autoBlockSummary").textContent = `モード: ${mode} / 24h ブロック ${d.blocked_24h}件・試験 ${d.dryrun_24h}件 / 自分のIP ${d.known_good}件を除外`;
+    document.getElementById("autoBlockTbody").innerHTML = d.recent.length ? d.recent.map((r) =>
+      `<tr><td>${escapeHtml(r.ip)}</td><td>${r.score ?? "-"}%</td><td>${r.events ?? "-"}</td><td class="mono-dim">${escapeHtml(new Date(r.at * 1000).toLocaleString("ja-JP", { hour12: false }))}</td><td>${r.dry_run ? '<span class="vuln-pill p-low">試験</span>' : '<span class="vuln-pill p-high">ブロック</span>'}</td></tr>`).join("")
+      : '<tr><td colspan="5" class="mono-dim">まだ自動ブロックはありません</td></tr>';
+  } catch (e) { console.error("自動ブロックの取得に失敗", e); }
+}
+
 async function loadAbuseCandidates() {
+  loadAutoBlock();
   try {
     const d = await (await fetch("/api/abuse-candidates")).json();
     const tbody = document.getElementById("abuseTbody");
@@ -1684,7 +1700,7 @@ document.getElementById("abuseTbody")?.addEventListener("click", async (e) => {
   b.textContent = "送信中…";
   try {
     const d = await postJson("/api/abuse-report", { ip: b.dataset.ip });
-    b.textContent = `通報済み（信頼度 ${d.score ?? "?"}%）`;
+    b.textContent = `通報済み（信頼度 ${d.score ?? "?"}%${d.blocked ? "・ブロック済み" : ""}）`;
     setTimeout(loadAbuseCandidates, 1500);
   } catch (err) {
     b.textContent = "通報する";

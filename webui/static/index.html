@@ -6,7 +6,7 @@
 <title>SENTINEL // hit-linux-ids</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="style.css?v=20261012b">
+<link rel="stylesheet" href="style.css?v=20261012c">
 </head>
 <body>
 <canvas id="netCanvas"></canvas>
@@ -168,6 +168,16 @@
           <input type="number" id="abuseMinEvents" min="3" max="1000" value="5">
           <label class="settings-label">SSHログインに成功した相手の信頼度がこの値(%)以上なら、即CRITICALにする（0で無効）</label>
           <input type="number" id="abuseCriticalScore" min="0" max="100" value="75">
+          <p class="mono-dim" style="margin:16px 0 4px; font-size:11px; border-top:1px solid var(--border); padding-top:12px;">— 🛡 自動ブロック（fail2ban連携）—</p>
+          <p class="mono-dim" style="margin:0 0 8px; font-size:11px;">直近1時間にSSH攻撃をしてきた（3回以上）IPのうち、AbuseIPDBの信頼度が閾値以上のものを、gateのfail2banで24時間ブロックします。自分が通報したIPは、再び攻撃してきたら必ずブロックします。LAN内・SSH許可リスト・普通にログインに成功したことのあるIPは対象外です。</p>
+          <label class="settings-label">モード</label>
+          <select id="autoBlockMode" class="dl-select">
+            <option value="off">オフ</option>
+            <option value="dryrun">試験（対象を記録するだけで、実際にはブロックしない）</option>
+            <option value="on">オン（実際にブロックする）</option>
+          </select>
+          <label class="settings-label">ブロックする信頼度（%以上）</label>
+          <input type="number" id="autoBlockScore" min="50" max="100" value="90">
           <div class="settings-actions">
             <span class="mini-btn" id="saveAbuseBtn">保存</span>
             <span class="mini-btn" id="testAbuseBtn">キーを確認（通報はしません）</span>
@@ -492,6 +502,14 @@
           <tbody id="abuseTbody"></tbody>
         </table>
       </div>
+      <div class="vuln-head-right" style="justify-content:space-between; margin:14px 0 6px;"><span class="mono-dim" style="letter-spacing:2px;">🛡 AUTO-BLOCK（自動ブロック）</span><span class="mono-dim" id="autoBlockSummary">--</span></div>
+      <div class="vuln-table-wrap">
+        <table class="vuln-table">
+          <thead><tr><th>IP</th><th>信頼度</th><th>攻撃回数</th><th>時刻</th><th>状態</th></tr></thead>
+          <tbody id="autoBlockTbody"></tbody>
+        </table>
+      </div>
+      <div class="mono-dim" style="font-size:11px;margin-top:8px;">解除したいときは gate で <code>sudo fail2ban-client set sentinel-abuse unbanip IP</code>。</div>
       <div class="mono-dim" style="font-size:11px;margin-top:8px;">送信は「通報する」を押した時だけです。研究目的のスキャナーは候補から除いています。キーの設定は ⚙設定 → 🚨通報。</div>
     </div>
   </section>
@@ -543,12 +561,12 @@
 
 </main>
 
-<script src="netbg.js?v=20261012b"></script>
-<script src="app.js?v=20261012b"></script>
+<script src="netbg.js?v=20261012c"></script>
+<script src="app.js?v=20261012c"></script>
 <!-- ATTACK MAP用: 地図投影(d3-geo)と世界地図データの展開(topojson) -->
 <script src="https://cdn.jsdelivr.net/npm/d3-array@3"></script>
 <script src="https://cdn.jsdelivr.net/npm/d3-geo@3"></script>
 <script src="https://cdn.jsdelivr.net/npm/topojson-client@3"></script>
-<script src="attackmap.js?v=20261012b"></script>
+<script src="attackmap.js?v=20261012c"></script>
 </body>
 </html>

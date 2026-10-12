@@ -19,6 +19,7 @@ from fastapi import BackgroundTasks, FastAPI, Header, HTTPException, WebSocket, 
 from fastapi.staticfiles import StaticFiles
 
 import abuseipdb
+import autoblock
 import attackmap
 import exposure
 import playbooks
@@ -135,6 +136,27 @@ def _init_db():
                 usage TEXT,
                 isp TEXT,
                 fetched_at REAL NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS auto_blocks (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                ip TEXT NOT NULL,
+                blocked_at REAL NOT NULL,
+                score INTEGER,
+                events INTEGER,
+                dry_run INTEGER DEFAULT 0
+            )
+            """
+        )
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_auto_blocks_ip ON auto_blocks(ip)")
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS known_good_ips (
+                ip TEXT PRIMARY KEY,
+                last_seen REAL NOT NULL
             )
             """
         )
@@ -581,6 +603,156 @@ def _dispatch_notifications(record: dict):
     _send_slack_alert(record)
 
 
+# --- 悪質なIPの自動ブロック（fail2ban連携。詳細は autoblock.py） ---
+AUTO_BLOCK_FILE = os.environ.get("AUTO_BLOCK_FILE", os.path.join(DATA_DIR, "sentinel_blocklist.log"))
+KNOWN_GOOD_DAYS = 90
+
+
+def _ab_setting_int(key: str, default: int, lo: int, hi: int) -> int:
+    v = _get_app_setting(key)
+    try:
+        return min(max(int(v), lo), hi) if v != "" else default
+    except ValueError:
+        return default
+
+
+def _ab_mode() -> str:
+    m = _get_app_setting("auto_block_mode")
+    return m if m in autoblock.MODES else "dryrun"  # 既定は「試験」（実際にはブロックせず、対象だけ記録する）
+
+
+def _note_login_success(record: dict):
+    """SSHログインに成功した相手のIPを「自分が使うIP」として覚える（自動ブロックの対象から外すため）。"""
+    msg = record.get("message") or ""
+    # 普通のログイン成功（INFO）だけ。不審なログイン成功（見慣れない国・攻撃後の成功＝CRITICAL等）の相手を
+    # 「自分のIP」と覚えてしまうと、侵入者を自動ブロックの対象から外してしまう
+    if record.get("category") != "auth_watch" or not msg.startswith("ログイン成功") or (record.get("severity") or "").lower() != "info":
+        return
+    m = attackmap.IP_RE.search(msg)
+    if not m:
+        return
+    ip = next(g for g in m.groups() if g)
+    try:
+        if ipaddress.ip_address(ip).is_private:
+            return
+    except ValueError:
+        return
+    with _db_connect() as conn:
+        conn.execute("INSERT OR REPLACE INTO known_good_ips VALUES (?, ?)", (ip, time.time()))
+
+
+def _record_blocks(blocks: list[dict], mode: str, now: float):
+    """ブロックを記録し、本番モードならfail2banが読むファイルへ追記する。"""
+    if not blocks:
+        return
+    with _db_connect() as conn:
+        conn.executemany("INSERT INTO auto_blocks (ip, blocked_at, score, events, dry_run) VALUES (?, ?, ?, ?, ?)",
+                         [(b["ip"], now, b.get("score"), b.get("events"), 1 if mode == "dryrun" else 0) for b in blocks])
+    if mode == "on":
+        with open(AUTO_BLOCK_FILE, "a", encoding="utf-8") as f:
+            for b in blocks:
+                f.write(autoblock.ban_line(b["ip"], b.get("score") or 0, b.get("events") or 0, now, JST))
+
+
+def _auto_block_run() -> dict:
+    mode = _ab_mode()
+    result = {"mode": mode, "blocked": []}
+    if mode == "off" or not _get_app_setting("abuseipdb_api_key"):
+        return result
+    now = time.time()
+    min_events = _ab_setting_int("auto_block_min_events", autoblock.DEFAULT_MIN_EVENTS, 1, 1000)
+    min_score = _ab_setting_int("auto_block_min_score", autoblock.DEFAULT_MIN_SCORE, 50, 100)
+    with _db_connect() as conn:
+        rows = [dict(r) for r in conn.execute(
+            "SELECT * FROM alerts WHERE category = 'auth_watch' AND epoch > ? AND ai_dismissed = 0"
+            " AND severity IN ('critical', 'warning') ORDER BY epoch ASC", (now - 3600,)).fetchall()]
+        known_good = {r["ip"] for r in conn.execute("SELECT ip FROM known_good_ips WHERE last_seen > ?", (now - KNOWN_GOOD_DAYS * 86400,)).fetchall()}
+        # 試験(dryrun)の記録は、本番(on)に切り替えた時にブロックを妨げないよう、同じモードの記録だけを「済み」とみなす
+        already = {r["ip"] for r in conn.execute("SELECT ip FROM auto_blocks WHERE blocked_at > ? AND dry_run = ?",
+                                                 (now - autoblock.BAN_SECONDS, 1 if mode == "dryrun" else 0)).fetchall()}
+        active = len(already)
+    counts: dict[str, int] = {}
+    for e in attack_map._events(rows):
+        if e["kind"] == "ssh":  # SSHだけ（Webはコンテナ経由でfail2banの対象外）
+            counts[e["ip"]] = counts.get(e["ip"], 0) + 1
+    whitelist = [w["entry"] for w in _load_ssh_whitelist()]
+    with _db_connect() as conn:
+        reported = {r["ip"] for r in conn.execute("SELECT ip FROM abuse_reports WHERE reported_at > ?", (now - 7 * 86400,)).fetchall()}
+    room = min(autoblock.MAX_NEW_PER_RUN, max(0, autoblock.MAX_ACTIVE - active))
+    # 自分が通報したIP（直近7日）は、評判の閾値に関係なく、再び攻撃してきたら（1回でも）ブロックする
+    own_reported = autoblock.pick_targets({ip: n for ip, n in counts.items() if ip in reported}, min_events=1,
+                                          whitelist=whitelist, known_good=known_good, already=already, limit=room)
+    for ip in own_reported:
+        result["blocked"].append({"ip": ip, "score": (_rep_cached(ip) or {}).get("score"), "events": counts[ip], "reported": True})
+    cands = autoblock.pick_targets({ip: n for ip, n in counts.items() if ip not in own_reported}, min_events=min_events,
+                                   whitelist=whitelist, known_good=known_good, already=already, limit=room * 2)
+    lookups = 0
+    for ip in cands:
+        if len(result["blocked"]) >= room:
+            break
+        rep = _rep_cached(ip)
+        if rep is None:
+            if lookups >= 15:
+                continue  # 照会は1回に15件まで（無料枠を守る）。残りは次の実行で
+            lookups += 1
+            rep = _rep_lookup(ip, timeout=6)
+        if not rep or rep["score"] < min_score:
+            continue
+        result["blocked"].append({"ip": ip, "score": rep["score"], "events": counts[ip]})
+    if not result["blocked"]:
+        return result
+    _record_blocks(result["blocked"], mode, now)
+    head = "[試験・実際にはブロックしていません] " if mode == "dryrun" else ""
+    listed = ", ".join(f"{autoblock.mask(b['ip'])}({'通報済み' if b.get('reported') else '信頼度%s%%' % b['score']}・{b['events']}回)" for b in result["blocked"][:8])
+    more = f" ほか{len(result['blocked']) - 8}件" if len(result["blocked"]) > 8 else ""
+    _emit_internal_alert("auto_block", f"{head}悪質なIPを自動ブロック: {len(result['blocked'])}件（{listed}{more}） 24時間", "warning", "sentinel")
+    return result
+
+
+async def _auto_block_loop():
+    await asyncio.sleep(120)
+    while True:
+        try:
+            await asyncio.to_thread(_auto_block_run)
+        except Exception as e:  # 自動ブロックの失敗で他の機能を止めない
+            print(f"[autoblock] 実行に失敗: {e}")
+        await asyncio.sleep(60)
+
+
+@app.get("/api/auto-block")
+def api_auto_block():
+    now = time.time()
+    with _db_connect() as conn:
+        recent = [dict(r) for r in conn.execute("SELECT * FROM auto_blocks ORDER BY blocked_at DESC LIMIT 30").fetchall()]
+        n24 = conn.execute("SELECT COUNT(*) FROM auto_blocks WHERE blocked_at > ? AND dry_run = 0", (now - 86400,)).fetchone()[0]
+        d24 = conn.execute("SELECT COUNT(*) FROM auto_blocks WHERE blocked_at > ? AND dry_run = 1", (now - 86400,)).fetchone()[0]
+        kg = conn.execute("SELECT COUNT(*) FROM known_good_ips").fetchone()[0]
+    return {
+        "mode": _ab_mode(),
+        "min_score": _ab_setting_int("auto_block_min_score", autoblock.DEFAULT_MIN_SCORE, 50, 100),
+        "min_events": _ab_setting_int("auto_block_min_events", autoblock.DEFAULT_MIN_EVENTS, 1, 1000),
+        "blocked_24h": n24, "dryrun_24h": d24, "known_good": kg,
+        "configured": bool(_get_app_setting("abuseipdb_api_key")),
+        "recent": [{"ip": r["ip"], "at": r["blocked_at"], "score": r["score"], "events": r["events"], "dry_run": bool(r["dry_run"])} for r in recent],
+    }
+
+
+@app.post("/api/auto-block")
+async def api_set_auto_block(payload: dict):
+    if "mode" in payload:
+        if payload["mode"] not in autoblock.MODES:
+            raise HTTPException(status_code=400, detail="modeはoff/dryrun/onのいずれかです")
+        _set_app_setting("auto_block_mode", payload["mode"])
+    for key, lo, hi in (("min_score", 50, 100), ("min_events", 1, 1000)):
+        if key in payload:
+            try:
+                n = int(payload[key])
+            except (TypeError, ValueError):
+                raise HTTPException(status_code=400, detail=f"{key}は整数で指定してください")
+            _set_app_setting(f"auto_block_{key}", str(min(max(n, lo), hi)))
+    return {"ok": True, "settings": api_auto_block()}
+
+
 # --- AbuseIPDB による評判の付与 ---
 # 攻撃元IPの「世界での評判」をアラートに付け、(1)攻撃の深刻度の判断材料にし、(2)SSHログインに成功した相手が
 # 悪質なIPなら即CRITICALにする。照会は読み取りだけ。結果は24時間キャッシュし、1日の照会枠（無料1,000件）を使い切らない。
@@ -689,6 +861,7 @@ def _process_new_record(record: dict):
     _apply_suppressions(record)
     try:
         _enrich_with_reputation(record)
+        _note_login_success(record)  # 評判で引き上げた後（CRITICALになったものは覚えない）
     except Exception as e:  # 評判の付与に失敗しても、アラートの取り込み自体は止めない
         print(f"[abuseipdb] 評判の付与に失敗: {e}")
     _append_alert(record)
@@ -1857,7 +2030,16 @@ async def api_abuse_report(payload: dict):
     with _db_connect() as conn:
         conn.execute("INSERT INTO abuse_reports (ip, reported_at, categories, event_count, score) VALUES (?, ?, ?, ?, ?)",
                      (ip, time.time(), ",".join(map(str, cand["categories"])), cand["count"], data.get("abuseConfidenceScore")))
-    return {"ok": True, "score": data.get("abuseConfidenceScore")}
+    # 自分が通報したIPは、そのままfail2banでもブロックする（LAN内・許可リスト・自分が使うIPは除く）
+    blocked = False
+    mode = _ab_mode()
+    if mode != "off" and "ssh" in cand["kinds"]:
+        with _db_connect() as conn:
+            known_good = {r["ip"] for r in conn.execute("SELECT ip FROM known_good_ips").fetchall()}
+        if autoblock.pick_targets({ip: 1}, min_events=1, whitelist=[w["entry"] for w in _load_ssh_whitelist()], known_good=known_good, already=set(), limit=1):
+            _record_blocks([{"ip": ip, "score": data.get("abuseConfidenceScore"), "events": cand["count"]}], mode, time.time())
+            blocked = mode == "on"
+    return {"ok": True, "score": data.get("abuseConfidenceScore"), "blocked": blocked}
 
 
 @app.get("/api/public-feed")
@@ -2086,6 +2268,7 @@ async def _on_startup():
     asyncio.create_task(_vuln_scheduler_loop())
     asyncio.create_task(_heartbeat_loop())
     asyncio.create_task(_exposure_loop())
+    asyncio.create_task(_auto_block_loop())
 
 
 @app.middleware("http")
