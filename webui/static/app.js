@@ -1636,11 +1636,12 @@ async function loadAbuseSettings() {
     const d = await (await fetch("/api/abuseipdb-settings")).json();
     document.getElementById("abuseApiKey").value = "";
     document.getElementById("abuseMinEvents").value = d.min_events;
+    document.getElementById("abuseCriticalScore").value = d.critical_score;
     document.getElementById("abuseKeyMasked").textContent = d.configured ? `登録済み: ${d.key_masked}` : "未登録";
   } catch (e) { console.error("AbuseIPDB設定の取得に失敗", e); }
 }
 document.getElementById("saveAbuseBtn")?.addEventListener("click", async () => {
-  const body = { min_events: document.getElementById("abuseMinEvents").value };
+  const body = { min_events: document.getElementById("abuseMinEvents").value, critical_score: document.getElementById("abuseCriticalScore").value };
   const key = document.getElementById("abuseApiKey").value.trim();
   if (key) body.api_key = key;  // 入力した時だけ送る（空のまま保存しても登録済みキーを消さない）
   try {
@@ -1664,13 +1665,13 @@ async function loadAbuseCandidates() {
     document.getElementById("abuseSummary").textContent =
       d.configured ? `候補 ${d.candidates.length}件 / 24h通報済み ${d.reported_24h}件（累計 ${d.reported_total}）` : "APIキー未設定（⚙設定 → 🚨通報）";
     if (!d.candidates.length) {
-      tbody.innerHTML = `<tr><td colspan="6" class="mono-dim">${d.configured ? `通報候補はありません（24時間で${d.min_events}回以上の発信元が対象）` : "AbuseIPDBのAPIキーを設定すると、通報候補が表示されます"}</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="7" class="mono-dim">${d.configured ? `通報候補はありません（24時間で${d.min_events}回以上の発信元が対象）` : "AbuseIPDBのAPIキーを設定すると、通報候補が表示されます"}</td></tr>`;
       return;
     }
     tbody.innerHTML = d.candidates.map((c) => {
       const kinds = Object.keys(c.kinds).map((k) => `<span class="vuln-pill ${k === "web" ? "p-mid" : "p-low"}">${escapeHtml(k.toUpperCase())}</span>`).join(" ");
       const last = new Date(c.last_epoch * 1000).toLocaleString("ja-JP", { hour12: false });
-      return `<tr><td>${escapeHtml(c.ip)}</td><td>${escapeHtml(`${c.cc} ${c.country}`)} / ${escapeHtml(`${c.asn} ${c.network}`.trim() || "-")}</td><td>${kinds}</td><td>${c.count}</td><td class="mono-dim">${escapeHtml(last)}</td>
+      return `<tr><td>${escapeHtml(c.ip)}</td><td>${escapeHtml(`${c.cc} ${c.country}`)} / ${escapeHtml(`${c.asn} ${c.network}`.trim() || "-")}</td><td>${kinds}</td><td>${c.count}</td><td>${c.score === null ? '<span class="mono-dim">取得中…</span>' : `<span class="vuln-pill ${c.score >= 75 ? "p-high" : c.score >= 25 ? "p-mid" : "p-low"}" title="AbuseIPDBへの報告 ${c.reports}件">${c.score}%</span>`}</td><td class="mono-dim">${escapeHtml(last)}</td>
         <td>${d.configured ? `<span class="mini-btn abuse-report-btn" data-ip="${escapeHtml(c.ip)}" data-cats="${c.categories.join(",")}" data-comment="${escapeHtml(c.comment)}">通報する</span>` : ""}</td></tr>`;
     }).join("");
   } catch (e) { console.error("通報候補の取得に失敗", e); }

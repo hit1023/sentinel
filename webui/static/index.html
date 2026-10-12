@@ -6,7 +6,7 @@
 <title>SENTINEL // hit-linux-ids</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="style.css?v=20261012a">
+<link rel="stylesheet" href="style.css?v=20261012b">
 </head>
 <body>
 <canvas id="netCanvas"></canvas>
@@ -166,6 +166,8 @@
           <span class="mono-dim" id="abuseKeyMasked" style="font-size:11px;"></span>
           <label class="settings-label">通報候補にする最低回数（24時間以内の検知回数。3以上）</label>
           <input type="number" id="abuseMinEvents" min="3" max="1000" value="5">
+          <label class="settings-label">SSHログインに成功した相手の信頼度がこの値(%)以上なら、即CRITICALにする（0で無効）</label>
+          <input type="number" id="abuseCriticalScore" min="0" max="100" value="75">
           <div class="settings-actions">
             <span class="mini-btn" id="saveAbuseBtn">保存</span>
             <span class="mini-btn" id="testAbuseBtn">キーを確認（通報はしません）</span>
@@ -486,7 +488,7 @@
       </div>
       <div class="vuln-table-wrap">
         <table class="vuln-table">
-          <thead><tr><th>IP</th><th>国 / ネットワーク</th><th>種類</th><th>回数(24h)</th><th>最終</th><th>通報</th></tr></thead>
+          <thead><tr><th>IP</th><th>国 / ネットワーク</th><th>種類</th><th>回数(24h)</th><th>評判</th><th>最終</th><th>通報</th></tr></thead>
           <tbody id="abuseTbody"></tbody>
         </table>
       </div>
@@ -541,12 +543,12 @@
 
 </main>
 
-<script src="netbg.js?v=20261012a"></script>
-<script src="app.js?v=20261012a"></script>
+<script src="netbg.js?v=20261012b"></script>
+<script src="app.js?v=20261012b"></script>
 <!-- ATTACK MAP用: 地図投影(d3-geo)と世界地図データの展開(topojson) -->
 <script src="https://cdn.jsdelivr.net/npm/d3-array@3"></script>
 <script src="https://cdn.jsdelivr.net/npm/d3-geo@3"></script>
 <script src="https://cdn.jsdelivr.net/npm/topojson-client@3"></script>
-<script src="attackmap.js?v=20261012a"></script>
+<script src="attackmap.js?v=20261012b"></script>
 </body>
 </html>

@@ -128,6 +128,18 @@ def _init_db():
         )
         conn.execute(
             """
+            CREATE TABLE IF NOT EXISTS abuse_rep_cache (
+                ip TEXT PRIMARY KEY,
+                score INTEGER,
+                reports INTEGER,
+                usage TEXT,
+                isp TEXT,
+                fetched_at REAL NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            """
             CREATE TABLE IF NOT EXISTS secret_ack (
                 alert_id TEXT PRIMARY KEY,
                 acked_at REAL NOT NULL
@@ -569,11 +581,116 @@ def _dispatch_notifications(record: dict):
     _send_slack_alert(record)
 
 
+# --- AbuseIPDB による評判の付与 ---
+# 攻撃元IPの「世界での評判」をアラートに付け、(1)攻撃の深刻度の判断材料にし、(2)SSHログインに成功した相手が
+# 悪質なIPなら即CRITICALにする。照会は読み取りだけ。結果は24時間キャッシュし、1日の照会枠（無料1,000件）を使い切らない。
+REP_TTL = 24 * 3600
+REP_DAILY_BUDGET = 900
+REP_DEFAULT_CRITICAL_SCORE = 75
+_rep_backoff_until = 0.0  # 照会に失敗（枠切れ・障害）したら、しばらく問い合わせない
+_rep_pool = None
+
+
+def _rep_critical_score() -> int:
+    v = _get_app_setting("abuseipdb_critical_score")
+    try:
+        return min(max(int(v), 0), 100) if v != "" else REP_DEFAULT_CRITICAL_SCORE
+    except ValueError:
+        return REP_DEFAULT_CRITICAL_SCORE
+
+
+def _rep_cached(ip: str) -> dict | None:
+    with _db_connect() as conn:
+        r = conn.execute("SELECT * FROM abuse_rep_cache WHERE ip = ? AND fetched_at > ?", (ip, time.time() - REP_TTL)).fetchone()
+    return dict(r) if r else None
+
+
+def _rep_lookup(ip: str, timeout: float = 4) -> dict | None:
+    """キャッシュを返し、無ければ（キー設定済み・枠に余裕があれば）照会する。失敗時はNone。"""
+    global _rep_backoff_until
+    cached = _rep_cached(ip)
+    if cached:
+        return cached
+    key = _get_app_setting("abuseipdb_api_key")
+    if not key or time.time() < _rep_backoff_until:
+        return None
+    with _db_connect() as conn:
+        used = conn.execute("SELECT COUNT(*) FROM abuse_rep_cache WHERE fetched_at > ?", (time.time() - 86400,)).fetchone()[0]
+    if used >= REP_DAILY_BUDGET:
+        return None
+    try:
+        r = abuseipdb.check_ip(key, ip, timeout=timeout)
+    except Exception as e:
+        print(f"[abuseipdb] 評判の照会に失敗: {e}")
+        _rep_backoff_until = time.time() + 300
+        return None
+    row = {"ip": ip, "score": r["score"], "reports": r["reports"], "usage": r["usage"], "isp": r["isp"], "fetched_at": time.time()}
+    with _db_connect() as conn:
+        conn.execute("INSERT OR REPLACE INTO abuse_rep_cache VALUES (:ip, :score, :reports, :usage, :isp, :fetched_at)", row)
+    return row
+
+
+def _rep_warm_async(ip: str):
+    """攻撃元IPの評判を、取り込みを待たせずに裏で引いておく（次回以降のアラートに付く）。"""
+    global _rep_pool
+    if _rep_pool is None:
+        from concurrent.futures import ThreadPoolExecutor
+        _rep_pool = ThreadPoolExecutor(max_workers=1)
+    _rep_pool.submit(_rep_lookup, ip, 10)
+
+
+def _rep_tag(r: dict) -> str:
+    return f" [AbuseIPDB 信頼度{r['score']}%・報告{r['reports']:,}件]"
+
+
+def _enrich_with_reputation(record: dict):
+    """auth_watch/web_watchのアラートに、攻撃元IPの評判を付ける。
+    ・SSHログイン成功の相手が悪質(既定75%以上)なら、重大度をCRITICALに引き上げる（成功は取り返しがつかないため同期で照会）。
+    ・攻撃（失敗・スキャン）は、キャッシュ済みの評判だけを付ける（取り込みを遅らせない）。未取得なら裏で引いておく。
+    利用者が登録した抑制ルールで黙らせたものは、上書きしない。"""
+    if record.get("suppressed") or record.get("category") not in ("auth_watch", "web_watch"):
+        return
+    if not _get_app_setting("abuseipdb_api_key"):
+        return
+    msg = record.get("message") or ""
+    m = attackmap.IP_RE.search(msg)
+    if not m:
+        return
+    ip = next(g for g in m.groups() if g)
+    try:
+        addr = ipaddress.ip_address(ip)
+    except ValueError:
+        return
+    if addr.is_private or addr.is_loopback or addr.is_link_local or addr.is_reserved:
+        return
+    success = record.get("category") == "auth_watch" and "ログイン成功" in msg
+    if success:
+        r = _rep_lookup(ip, timeout=4)
+    else:
+        r = _rep_cached(ip)
+        if r is None:
+            _rep_warm_async(ip)
+    if not r or r["reports"] == 0 and r["score"] == 0:
+        return
+    record["message"] = msg + _rep_tag(r)
+    record["abuse_score"] = r["score"]
+    limit = _rep_critical_score()
+    if success and limit and r["score"] >= limit and (record.get("severity") or "").lower() != "critical":
+        record.setdefault("original_severity", record.get("severity"))
+        record["severity"] = "critical"
+        record["ai_dismissed"] = False
+        record["message"] += " → 悪質なIPからのログイン成功のためCRITICALに引き上げ"
+
+
 def _process_new_record(record: dict):
     """エージェントからのingestとサーバー自身が生成するアラート(ハートビート等)で
     共通の処理: 許可リスト・抑制ルール適用 → 保存。通知は呼び出し側で行う。"""
     _apply_ssh_whitelist(record)
     _apply_suppressions(record)
+    try:
+        _enrich_with_reputation(record)
+    except Exception as e:  # 評判の付与に失敗しても、アラートの取り込み自体は止めない
+        print(f"[abuseipdb] 評判の付与に失敗: {e}")
     _append_alert(record)
     _persist_important(record)
     _resolve_secret_alerts(record)
@@ -821,7 +938,7 @@ async def ingest_alert(
         record["ai_summary"] = None
     # AIの判定より先に、ユーザー登録の抑制ルール・SSH許可リストを適用する
     # （「これは脅威ではない」と一度教えたものはAIの結果を待たず確実に黙らせる）
-    _process_new_record(record)
+    await asyncio.to_thread(_process_new_record, record)  # 評判の照会（外部API）でイベントループを止めない
     # 抑制・ホワイトリストを経た最終的な重大度に応じてメール/Slack通知する
     # （レスポンスを待たせないようBackgroundTasksで非同期に送信）
     background_tasks.add_task(_dispatch_notifications, record)
@@ -1658,7 +1775,8 @@ def _abuse_candidates(hours: int = 24) -> list[dict]:
         if publicfeed.is_benign_scanner(asn.get(c["ip"])):
             continue  # 研究目的のスキャナーは通報しない
         g, a = geo.get(c["ip"], {}), asn.get(c["ip"], {})
-        out.append({**c, "country": g.get("country", ""), "cc": g.get("country_code", ""), "asn": a.get("asn", ""),
+        rep = _rep_cached(c["ip"])
+        out.append({**c, "score": rep["score"] if rep else None, "reports": rep["reports"] if rep else None, "country": g.get("country", ""), "cc": g.get("country_code", ""), "asn": a.get("asn", ""),
                     "network": a.get("name", ""), "categories": abuseipdb.categories_for(c["kinds"]),
                     "comment": abuseipdb.build_comment(c["count"], c["kinds"], hours)})
     return sorted(out, key=lambda c: -c["count"])
@@ -1667,7 +1785,8 @@ def _abuse_candidates(hours: int = 24) -> list[dict]:
 @app.get("/api/abuseipdb-settings")
 def api_get_abuse_settings():
     key = _get_app_setting("abuseipdb_api_key")
-    return {"configured": bool(key), "key_masked": f"…{key[-4:]}" if key else "", "min_events": _abuse_min_events()}
+    return {"configured": bool(key), "key_masked": f"…{key[-4:]}" if key else "", "min_events": _abuse_min_events(),
+            "critical_score": _rep_critical_score()}
 
 
 @app.post("/api/abuseipdb-settings")
@@ -1683,6 +1802,12 @@ async def api_set_abuse_settings(payload: dict):
         except (TypeError, ValueError):
             raise HTTPException(status_code=400, detail="回数は整数で指定してください")
         _set_app_setting("abuseipdb_min_events", str(min(max(n, 3), 1000)))
+    if "critical_score" in payload:
+        try:
+            n = int(payload["critical_score"])
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=400, detail="信頼度は0〜100の整数で指定してください")
+        _set_app_setting("abuseipdb_critical_score", str(min(max(n, 0), 100)))
     return {"ok": True, "settings": api_get_abuse_settings()}
 
 
@@ -1702,8 +1827,12 @@ def api_abuse_candidates():
     with _db_connect() as conn:
         done_24h = conn.execute("SELECT COUNT(*) FROM abuse_reports WHERE reported_at > ?", (time.time() - 86400,)).fetchone()[0]
         total = conn.execute("SELECT COUNT(*) FROM abuse_reports").fetchone()[0]
+    cands = _abuse_candidates()[:100]
+    if _get_app_setting("abuseipdb_api_key"):
+        for c in [c for c in cands if c["score"] is None][:20]:
+            _rep_warm_async(c["ip"])  # 次回の表示から評判が出る
     return {"configured": bool(_get_app_setting("abuseipdb_api_key")), "min_events": _abuse_min_events(),
-            "reported_24h": done_24h, "reported_total": total, "candidates": _abuse_candidates()[:100]}
+            "reported_24h": done_24h, "reported_total": total, "candidates": cands}
 
 
 @app.post("/api/abuse-report")

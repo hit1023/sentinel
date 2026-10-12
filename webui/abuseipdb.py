@@ -60,3 +60,15 @@ def report_ip(key: str, ip: str, categories: list[int], comment: str, timestamp_
         "ip": ip, "categories": ",".join(map(str, categories)), "comment": comment[:1000], "timestamp": timestamp_iso,
     })
     return data.get("data", {})
+
+
+def check_ip(key: str, ip: str, timeout: float = 15) -> dict:
+    """IPの評判を照会する（読み取りだけ。通報はしない）。"""
+    data, _ = _request(f"/check?ipAddress={urllib.parse.quote(ip)}&maxAgeInDays=90", key, timeout=timeout)
+    d = data.get("data", {})
+    return {
+        "score": int(d.get("abuseConfidenceScore") or 0),
+        "reports": int(d.get("totalReports") or 0),
+        "usage": d.get("usageType") or "",
+        "isp": d.get("isp") or "",
+    }
