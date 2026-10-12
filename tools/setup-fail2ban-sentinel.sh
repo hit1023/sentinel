@@ -15,7 +15,8 @@ HOME_IP="${SENTINEL_HOME_IP:-106.179.13.173}"   # 自宅の回線のグローバ
 cat > /etc/fail2ban/filter.d/sentinel-abuse.conf <<CONF
 # SENTINEL(WebUI)が書き出す「SENTINEL-BAN <IP> ...」の行を拾う
 [Definition]
-failregex = ^\S+ SENTINEL-BAN <HOST>\b
+# fail2banは、行頭の日時を認識すると、その部分を取り除いてから照合する。日時が取れた場合も取れない場合も合うよう、行頭を固定しない
+failregex = SENTINEL-BAN <HOST>\b
 ignoreregex =
 CONF
 
