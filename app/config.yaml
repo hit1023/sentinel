@@ -122,6 +122,8 @@ integrity_watch:
     - "*/etc/mtab"
     - "*/etc/adjtime"
     - "*/etc/resolv.conf"
+    # パッケージの更新（ldconfig）のたびに自動で作り直されるキャッシュ（コード側の既定でも除外している）
+    - "*/etc/ld.so.cache"
     - "*.log"
     - "*.tmp"
     # CUPSが印刷購読の状態管理のため頻繁に書き換える運用ファイル（改ざんではない）

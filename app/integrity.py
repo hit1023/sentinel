@@ -22,6 +22,12 @@ def _sha256(path, chunk_size=65536):
         return None
 
 
+# どのホストでも常に対象外にするパターン。システムが自動で作り直すキャッシュで、パッケージの更新
+# （共有ライブラリのインストール→ldconfig）のたびに必ず変わる。改ざんの検知対象にする意味がない。
+# config.yamlに書くとインストーラーが上書きしない既存ホストへ反映されないため、コード側に持つ
+BUILTIN_EXCLUDE_PATTERNS = ("*/etc/ld.so.cache",)
+
+
 class IntegrityWatcher:
     def __init__(self, config: dict, notifier):
         self.config = config
@@ -31,7 +37,7 @@ class IntegrityWatcher:
         self.watch_paths = [paths.resolve_fs_path(p) for p in config.get("watch_paths", [])]
         # exclude_patterns/critical_patternsは先頭が*から始まるfnmatchパターンのため
         # プレフィックスの有無に関わらずマッチするので変換不要。
-        self.exclude_patterns = config.get("exclude_patterns", [])
+        self.exclude_patterns = list(config.get("exclude_patterns", [])) + list(BUILTIN_EXCLUDE_PATTERNS)
         # config.get(key, default)は空文字("" = 未設定の意図)でもキーが存在すれば
         # そのまま返しdefaultにフォールバックしないため、明示的にorで判定する
         # （notify.pyのlog_fileで踏んだのと同じ罠）。
