@@ -57,6 +57,33 @@ class AgentResolve(unittest.TestCase):
         w.check(force=True)
         self.assertEqual(n.sent, [])  # 解消済みは二度と通知しない
 
+    def test_deleted_repo_is_reported_as_resolved(self):
+        import shutil
+        w, n = self._watcher()
+        w.check(force=True)
+        self.assertTrue(any("repo=r1" in m for _, m, _ in n.sent))
+        n.sent.clear()
+        # 別のリポジトリが残っている状態で、r1だけが削除された
+        other = os.path.join(self.root, "r2")
+        os.makedirs(other)
+        import subprocess
+        subprocess.run(["git", "init", "-q", other], check=True)
+        shutil.rmtree(self.repo)
+        w.check(force=True)
+        self.assertEqual(len(n.sent), 1, n.sent)
+        self.assertTrue(n.sent[0][1].startswith("解消を確認: repo=r1"), n.sent)
+        n.sent.clear()
+        w.check(force=True)
+        self.assertEqual(n.sent, [])
+
+    def test_unreadable_root_does_not_resolve(self):
+        w, n = self._watcher()
+        w.check(force=True)
+        n.sent.clear()
+        w.roots = [os.path.join(self.root, "missing")]   # ディスクが外れている等
+        w.check(force=True)
+        self.assertFalse(any(m.startswith("解消を確認") for _, m, _ in n.sent), n.sent)
+
     def test_unfixed_is_not_repeated(self):
         w, n = self._watcher()
         w.check(force=True)

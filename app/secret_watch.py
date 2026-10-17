@@ -146,6 +146,19 @@ class SecretWatcher:
                 known -= resolved
                 remaining = [f for f in findings if f["key"] in known]
                 self._notify_resolved(os.path.basename(repo), len(resolved), remaining)
+        # 前回まで検知していたリポジトリが、走査範囲から無くなった（削除・移動された）場合も「解消」として知らせる。
+        # すべての走査場所に入れた場合だけ判定する（ディスクが外れている等の一時的な不在を、解消と誤認しない）
+        if not problems:
+            scanned = {os.path.basename(r) for r in repos}
+            gone: dict[str, set] = {}
+            for k in known:
+                repo_name = k.split("|", 1)[0]
+                if repo_name not in scanned:
+                    gone.setdefault(repo_name, set()).add(k)
+            for repo_name, keys in gone.items():
+                known -= keys
+                self.notifier.alert("secret_watch", f"解消を確認: repo={repo_name} リポジトリが走査範囲から無くなりました"
+                                    f"（削除・移動）。前回の検知{len(keys)}件", "info", allow_ai_dismiss=False)
         self._state["known"] = sorted(known)
         self._state["last_run"] = now
         if history:
