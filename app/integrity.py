@@ -25,7 +25,9 @@ def _sha256(path, chunk_size=65536):
 # どのホストでも常に対象外にするパターン。システムが自動で作り直すキャッシュで、パッケージの更新
 # （共有ライブラリのインストール→ldconfig）のたびに必ず変わる。改ざんの検知対象にする意味がない。
 # config.yamlに書くとインストーラーが上書きしない既存ホストへ反映されないため、コード側に持つ
-BUILTIN_EXCLUDE_PATTERNS = ("*/etc/ld.so.cache",)
+# /etc/alternatives/* はupdate-alternativesが管理するリンクで、参照先コマンド(xz等)の
+# パッケージ更新のたびにハッシュが変わる（unattended-upgrade直後の誤検知を実測確認済み）。
+BUILTIN_EXCLUDE_PATTERNS = ("*/etc/ld.so.cache", "*/etc/alternatives/*")
 
 
 class IntegrityWatcher:

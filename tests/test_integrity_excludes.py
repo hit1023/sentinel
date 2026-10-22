@@ -17,6 +17,8 @@ class IntegrityExcludes(unittest.TestCase):
         self.assertTrue(w._is_excluded("/etc/ld.so.cache"))
         self.assertTrue(w._is_excluded("/hostfs/etc/ld.so.cache"))
         self.assertTrue(w._is_excluded("/var/x.log"))
+        self.assertTrue(w._is_excluded("/etc/alternatives/lzcat"))
+        self.assertTrue(w._is_excluded("/hostfs/etc/alternatives/lzcat"))
         self.assertFalse(w._is_excluded("/etc/passwd"))
         self.assertFalse(w._is_excluded("/etc/ld.so.conf"))
 
