@@ -6,7 +6,7 @@
 <title>SENTINEL // hit-linux-ids</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="style.css?v=20261026a">
+<link rel="stylesheet" href="style.css?v=20261026b">
 </head>
 <body>
 <canvas id="netCanvas"></canvas>
@@ -438,6 +438,26 @@
     </div>
   </section>
 
+  <section class="trend-row">
+    <div class="panel trend-panel">
+      <div class="panel-head">
+        <span>ATTACK TREND（日毎・週ごとの攻撃件数）</span>
+        <span class="attack-scope" id="trendUnit">
+          <span class="mini-btn" data-unit="daily">日毎（30日）</span>
+          <span class="mini-btn" data-unit="weekly">週ごと（12週）</span>
+        </span>
+        <span class="mono-dim" id="trendSummary">--</span>
+      </div>
+      <div class="trend-legend">
+        <span><i style="background:#ff3860"></i>SSH攻撃</span>
+        <span><i style="background:#ffb347"></i>Web攻撃</span>
+        <span><i style="background:#39ff8a"></i>自動ブロック（右の軸）</span>
+        <span class="mono-dim">監査DBにCRITICAL/WARNINGで残った攻撃。日付は日本時間</span>
+      </div>
+      <div class="trend-chart" id="trendChart"></div>
+    </div>
+  </section>
+
   <section class="vuln-row">
     <div class="panel vuln-panel">
       <div class="panel-head">
@@ -561,12 +581,12 @@
 
 </main>
 
-<script src="netbg.js?v=20261026a"></script>
-<script src="app.js?v=20261026a"></script>
+<script src="netbg.js?v=20261026b"></script>
+<script src="app.js?v=20261026b"></script>
 <!-- ATTACK MAP用: 地図投影(d3-geo)と世界地図データの展開(topojson) -->
 <script src="https://cdn.jsdelivr.net/npm/d3-array@3"></script>
 <script src="https://cdn.jsdelivr.net/npm/d3-geo@3"></script>
 <script src="https://cdn.jsdelivr.net/npm/topojson-client@3"></script>
-<script src="attackmap.js?v=20261026a"></script>
+<script src="attackmap.js?v=20261026b"></script>
 </body>
 </html>

@@ -1920,6 +1920,43 @@ def api_attack_map(hours: float = 24, since: float | None = None, scope: str = "
     return data
 
 
+def _trend_series(conn, unit: str, n: int) -> list[dict]:
+    """日毎(unit=day)・週ごと(unit=week、月曜始まり)の攻撃件数。日付はJST。
+    攻撃件数は監査DB(CRITICAL/WARNINGで残したもの)のSSH・Web、blockedは自動ブロックの実行件数。"""
+    jst = datetime.timezone(datetime.timedelta(hours=9))
+    today = datetime.datetime.now(jst).date()
+    if unit == "week":
+        end = today - datetime.timedelta(days=today.weekday())
+        keys = [(end - datetime.timedelta(weeks=i)) for i in range(n - 1, -1, -1)]
+        bucket = "date(%s,'unixepoch','+9 hours','weekday 0','-6 days')"
+    else:
+        keys = [(today - datetime.timedelta(days=i)) for i in range(n - 1, -1, -1)]
+        bucket = "date(%s,'unixepoch','+9 hours')"
+    start = datetime.datetime.combine(keys[0], datetime.time(), jst).timestamp()
+    out = {k.isoformat(): {"date": k.isoformat(), "ssh": 0, "web": 0, "blocked": 0} for k in keys}
+    for r in conn.execute(
+        f"SELECT {bucket % 'epoch'} b, category, COUNT(*) c FROM alerts"
+        " WHERE category IN ('auth_watch','web_watch') AND epoch >= ? GROUP BY b, category", (start,)):
+        if r["b"] in out:
+            out[r["b"]]["ssh" if r["category"] == "auth_watch" else "web"] = r["c"]
+    for r in conn.execute(
+        f"SELECT {bucket % 'blocked_at'} b, COUNT(*) c FROM auto_blocks"
+        " WHERE dry_run = 0 AND blocked_at >= ? GROUP BY b", (start,)):
+        if r["b"] in out:
+            out[r["b"]]["blocked"] = r["c"]
+    return list(out.values())
+
+
+@app.get("/api/attack-trend")
+def api_attack_trend(days: int = 30, weeks: int = 12):
+    """ATTACK TRENDパネル用。日毎(直近days日)と週ごと(直近weeks週)の攻撃件数と自動ブロック件数。"""
+    with _db_connect() as conn:
+        return {
+            "daily": _trend_series(conn, "day", min(max(days, 7), 90)),
+            "weekly": _trend_series(conn, "week", min(max(weeks, 4), 26)),
+        }
+
+
 # --- AbuseIPDB への通報（候補を出し、人が確認して押した時だけ送る） ---
 def _abuse_min_events() -> int:
     try:

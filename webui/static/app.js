@@ -1714,3 +1714,74 @@ document.getElementById("abuseTbody")?.addEventListener("click", async (e) => {
 loadAbuseSettings();
 loadAbuseCandidates();
 setInterval(loadAbuseCandidates, 300000);
+
+// --- ATTACK TREND: 日毎・週ごとの攻撃件数（SSH/Web の積み上げ棒 + 自動ブロックの線） ---
+(function () {
+  const root = document.getElementById("trendChart");
+  if (!root) return;
+  let unit = "daily";
+  try { unit = localStorage.getItem("trendUnit") || "daily"; } catch (e) { /* 記憶できなくても動く */ }
+  let data = null;
+
+  const fmt = (n) => n.toLocaleString("ja-JP");
+  function label(d, isWeek) {
+    const [, m, day] = d.split("-");
+    return `${+m}/${+day}`;
+  }
+  function render() {
+    document.querySelectorAll("#trendUnit .mini-btn").forEach((b) => b.classList.toggle("active", b.dataset.unit === unit));
+    if (!data) return;
+    const rows = data[unit];
+    const isWeek = unit === "weekly";
+    const W = 900, H = 240, L = 46, R = 40, T = 14, B = 26;
+    const pw = W - L - R, ph = H - T - B;
+    const maxA = Math.max(5, ...rows.map((r) => r.ssh + r.web));
+    const maxB = Math.max(3, ...rows.map((r) => r.blocked));
+    const niceMax = (v) => { const p = 10 ** Math.floor(Math.log10(v)); const m = v / p; return (m <= 1 ? 1 : m <= 2 ? 2 : m <= 5 ? 5 : 10) * p; };
+    const topA = niceMax(maxA), topB = niceMax(maxB);
+    const slot = pw / rows.length, bw = Math.max(3, slot * 0.68);
+    const x = (i) => L + slot * i + (slot - bw) / 2;
+    const yA = (v) => T + ph - (v / topA) * ph;
+    const yB = (v) => T + ph - (v / topB) * ph;
+    let g = "";
+    for (let k = 0; k <= 4; k++) {
+      const y = T + (ph * k) / 4;
+      g += `<line class="tr-grid" x1="${L}" x2="${W - R}" y1="${y}" y2="${y}"/>`
+        + `<text x="${L - 6}" y="${y + 3}" text-anchor="end">${fmt(Math.round(topA * (1 - k / 4)))}</text>`
+        + `<text x="${W - R + 6}" y="${y + 3}" fill="#39ff8a" style="fill:#39ff8a">${Math.round(topB * (1 - k / 4))}</text>`;
+    }
+    const every = Math.ceil(rows.length / (isWeek ? 12 : 10));
+    let bars = "", labels = "", pts = [];
+    rows.forEach((r, i) => {
+      const hs = (r.ssh / topA) * ph, hw = (r.web / topA) * ph;
+      const tip = `${r.date}${isWeek ? "（週の始まり）" : ""}\nSSH攻撃 ${fmt(r.ssh)} / Web攻撃 ${fmt(r.web)} / 自動ブロック ${r.blocked}`;
+      bars += `<g class="tr-bar"><title>${tip}</title>`
+        + `<rect x="${x(i)}" y="${T + ph - hs}" width="${bw}" height="${hs}" fill="#ff3860"/>`
+        + `<rect x="${x(i)}" y="${T + ph - hs - hw}" width="${bw}" height="${hw}" fill="#ffb347"/>`
+        + `<rect x="${L + slot * i}" y="${T}" width="${slot}" height="${ph}" fill="transparent"/></g>`;
+      if (i % every === 0 || i === rows.length - 1) labels += `<text x="${x(i) + bw / 2}" y="${H - 8}" text-anchor="middle">${label(r.date, isWeek)}</text>`;
+      pts.push([x(i) + bw / 2, yB(r.blocked), r.blocked]);
+    });
+    const line = pts.length ? `<polyline fill="none" stroke="#39ff8a" stroke-width="1.6" points="${pts.map((p) => p[0] + "," + p[1]).join(" ")}"/>`
+      + pts.filter((p) => p[2] > 0).map((p) => `<circle cx="${p[0]}" cy="${p[1]}" r="2.6" fill="#39ff8a"/>`).join("") : "";
+    root.innerHTML = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="攻撃件数の推移">${g}${bars}${line}${labels}</svg>`;
+
+    const tot = rows.reduce((a, r) => ({ ssh: a.ssh + r.ssh, web: a.web + r.web, blocked: a.blocked + r.blocked }), { ssh: 0, web: 0, blocked: 0 });
+    const peak = rows.reduce((a, r) => (r.ssh + r.web > a.ssh + a.web ? r : a), rows[0]);
+    document.getElementById("trendSummary").textContent =
+      `合計 ${fmt(tot.ssh + tot.web)}件（SSH ${fmt(tot.ssh)} / Web ${fmt(tot.web)}）・ブロック ${tot.blocked}件・ピーク ${label(peak.date)} ${fmt(peak.ssh + peak.web)}件`;
+  }
+  async function load() {
+    try {
+      data = await (await fetch("/api/attack-trend")).json();
+      render();
+    } catch (e) { console.error("攻撃件数の推移の取得に失敗", e); }
+  }
+  document.querySelectorAll("#trendUnit .mini-btn").forEach((b) => b.addEventListener("click", () => {
+    unit = b.dataset.unit;
+    try { localStorage.setItem("trendUnit", unit); } catch (e) { /* 無視 */ }
+    render();
+  }));
+  load();
+  setInterval(load, 600000);
+})();

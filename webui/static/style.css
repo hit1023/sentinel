@@ -1130,3 +1130,13 @@ body.alert-critical .topbar {
 .ab-state { font-size: 12px; font-weight: 600; cursor: default; }
 .ab-state.ab-on { color: #ff6b81; }
 .ab-state.ab-dry { color: #39ff8a; }
+
+/* ATTACK TREND: 日毎・週ごとの攻撃件数の棒グラフ */
+.trend-row { display: block; margin-bottom: 18px; }
+.trend-legend { display: flex; flex-wrap: wrap; gap: 6px 18px; padding: 10px 14px 0; font-size: 12px; color: var(--text-dim); }
+.trend-legend i { display: inline-block; width: 10px; height: 10px; margin-right: 6px; border-radius: 2px; vertical-align: -1px; }
+.trend-chart { padding: 6px 10px 12px; }
+.trend-chart svg { width: 100%; height: auto; display: block; }
+.trend-chart text { fill: var(--text-dim); font-size: 10px; font-family: inherit; }
+.trend-chart .tr-grid { stroke: rgba(36, 240, 255, 0.12); stroke-width: 1; }
+.trend-chart .tr-bar:hover { opacity: 0.75; }
