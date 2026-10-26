@@ -6,7 +6,7 @@
 <title>SENTINEL // hit-linux-ids</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="style.css?v=20261012e">
+<link rel="stylesheet" href="style.css?v=20261026a">
 </head>
 <body>
 <canvas id="netCanvas"></canvas>
@@ -505,7 +505,7 @@
       <div class="vuln-head-right" style="justify-content:space-between; margin:14px 0 6px;"><span class="mono-dim" style="letter-spacing:2px;">🛡 AUTO-BLOCK（自動ブロック）</span><span class="mono-dim" id="autoBlockSummary">--</span></div>
       <div class="vuln-table-wrap">
         <table class="vuln-table">
-          <thead><tr><th>IP</th><th>信頼度</th><th>攻撃回数</th><th>時刻</th><th>状態</th></tr></thead>
+          <thead><tr><th>IP</th><th>信頼度</th><th>攻撃回数</th><th>時刻</th><th>状態（表示のみ）</th></tr></thead>
           <tbody id="autoBlockTbody"></tbody>
         </table>
       </div>
@@ -561,12 +561,12 @@
 
 </main>
 
-<script src="netbg.js?v=20261012e"></script>
-<script src="app.js?v=20261012e"></script>
+<script src="netbg.js?v=20261026a"></script>
+<script src="app.js?v=20261026a"></script>
 <!-- ATTACK MAP用: 地図投影(d3-geo)と世界地図データの展開(topojson) -->
 <script src="https://cdn.jsdelivr.net/npm/d3-array@3"></script>
 <script src="https://cdn.jsdelivr.net/npm/d3-geo@3"></script>
 <script src="https://cdn.jsdelivr.net/npm/topojson-client@3"></script>
-<script src="attackmap.js?v=20261012e"></script>
+<script src="attackmap.js?v=20261026a"></script>
 </body>
 </html>

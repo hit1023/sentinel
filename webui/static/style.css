@@ -1125,3 +1125,8 @@ body.alert-critical .topbar {
 .panel-head.collapsible.sec-collapsed .panel-chevron { transform: rotate(-90deg); }
 .sec-hidden { display: none !important; }
 .panel.has-collapsed { min-height: 0; }
+
+/* AUTO-BLOCK の状態表示: ボタンに見えないよう、枠・背景なしの文字だけにする */
+.ab-state { font-size: 12px; font-weight: 600; cursor: default; }
+.ab-state.ab-on { color: #ff6b81; }
+.ab-state.ab-dry { color: #39ff8a; }
