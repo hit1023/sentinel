@@ -6,7 +6,7 @@
 <title>SENTINEL // hit-linux-ids</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="style.css?v=20261026b">
+<link rel="stylesheet" href="style.css?v=20261031a">
 </head>
 <body>
 <canvas id="netCanvas"></canvas>
@@ -157,7 +157,7 @@
       <div class="modal-tab-panel" id="tab-abuse-report" style="display:none;">
         <p class="mono-dim" style="margin:0 0 12px;">
           攻撃元のIPを <a href="https://www.abuseipdb.com/" target="_blank" rel="noopener" style="color:var(--neon-cyan);">AbuseIPDB</a>
-          へ通報できるようにします。候補は画面の「ABUSEIPDB」パネルに出ますが、<b>送信は、内容を確認して「通報する」を押した時だけ</b>です（自動では送りません）。
+          へ通報できるようにします。候補は画面の「ABUSEIPDB」パネルに出ますが、送信は、内容を確認して「通報する」を押した時のほか、<b>信頼度が高い（初期値100%）IPだけは、下の設定で自動通報</b>します。
           送るのは、攻撃元のIP・攻撃の種類・時刻・短い英文コメントだけで、自分のホスト名等は含みません。
         </p>
         <div class="settings-form">
@@ -168,6 +168,9 @@
           <input type="number" id="abuseMinEvents" min="3" max="1000" value="5">
           <label class="settings-label">SSHログインに成功した相手の信頼度がこの値(%)以上なら、即CRITICALにする（0で無効）</label>
           <input type="number" id="abuseCriticalScore" min="0" max="100" value="75">
+          <label class="settings-label" style="display:flex; gap:8px; align-items:center;"><input type="checkbox" id="abuseAutoReport"> 信頼度が高いIPは確認なしで自動通報する（10分ごと。LAN内・許可リスト・自分が使うIP・研究目的のスキャナーは対象外）</label>
+          <label class="settings-label">自動通報する信頼度（%以上。75〜100）</label>
+          <input type="number" id="abuseAutoReportScore" min="75" max="100" value="100">
           <p class="mono-dim" style="margin:16px 0 4px; font-size:11px; border-top:1px solid var(--border); padding-top:12px;">— 🛡 自動ブロック（fail2ban連携）—</p>
           <p class="mono-dim" style="margin:0 0 8px; font-size:11px;">直近1時間にSSH攻撃をしてきた（3回以上）IPのうち、AbuseIPDBの信頼度が閾値以上のものを、gateのfail2banで24時間ブロックします。自分が通報したIPは、再び攻撃してきたら必ずブロックします。LAN内・SSH許可リスト・普通にログインに成功したことのあるIPは対象外です。</p>
           <label class="settings-label">モード</label>
@@ -581,12 +584,12 @@
 
 </main>
 
-<script src="netbg.js?v=20261026b"></script>
-<script src="app.js?v=20261026b"></script>
+<script src="netbg.js?v=20261031a"></script>
+<script src="app.js?v=20261031a"></script>
 <!-- ATTACK MAP用: 地図投影(d3-geo)と世界地図データの展開(topojson) -->
 <script src="https://cdn.jsdelivr.net/npm/d3-array@3"></script>
 <script src="https://cdn.jsdelivr.net/npm/d3-geo@3"></script>
 <script src="https://cdn.jsdelivr.net/npm/topojson-client@3"></script>
-<script src="attackmap.js?v=20261026b"></script>
+<script src="attackmap.js?v=20261031a"></script>
 </body>
 </html>

@@ -2001,8 +2001,9 @@ def _abuse_candidates(hours: int = 24) -> list[dict]:
 @app.get("/api/abuseipdb-settings")
 def api_get_abuse_settings():
     key = _get_app_setting("abuseipdb_api_key")
+    auto_on, auto_score = _auto_report_settings()
     return {"configured": bool(key), "key_masked": f"…{key[-4:]}" if key else "", "min_events": _abuse_min_events(),
-            "critical_score": _rep_critical_score()}
+            "critical_score": _rep_critical_score(), "auto_report": auto_on, "auto_report_score": auto_score}
 
 
 @app.post("/api/abuseipdb-settings")
@@ -2024,6 +2025,14 @@ async def api_set_abuse_settings(payload: dict):
         except (TypeError, ValueError):
             raise HTTPException(status_code=400, detail="信頼度は0〜100の整数で指定してください")
         _set_app_setting("abuseipdb_critical_score", str(min(max(n, 0), 100)))
+    if "auto_report" in payload:
+        _set_app_setting("abuseipdb_auto_report", "on" if payload["auto_report"] else "off")
+    if "auto_report_score" in payload:
+        try:
+            n = int(payload["auto_report_score"])
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=400, detail="自動通報の信頼度は75〜100の整数で指定してください")
+        _set_app_setting("abuseipdb_auto_report_score", str(min(max(n, 75), 100)))
     return {"ok": True, "settings": api_get_abuse_settings()}
 
 
@@ -2051,23 +2060,16 @@ def api_abuse_candidates():
             "reported_24h": done_24h, "reported_total": total, "candidates": cands}
 
 
-@app.post("/api/abuse-report")
-async def api_abuse_report(payload: dict):
-    """人が確認して押した時だけ送る。対象IPは、画面から渡された値を信用せず、サーバー側で候補を再計算して照合する。"""
-    key = _get_app_setting("abuseipdb_api_key")
-    if not key:
-        raise HTTPException(status_code=400, detail="APIキーが未設定です")
-    ip = (payload.get("ip") or "").strip()
-    cand = next((c for c in await asyncio.to_thread(_abuse_candidates) if c["ip"] == ip), None)
-    if not cand:
-        raise HTTPException(status_code=400, detail="通報の対象ではありません（回数不足・通報済み・対象外のIP）")
+def _send_abuse_report(key: str, cand: dict) -> dict:
+    """AbuseIPDBへ1件通報し、記録して、SSH攻撃ならfail2banのブロックにもつなぐ（手動ボタンと自動通報の共通部分）。"""
+    ip = cand["ip"]
     with _db_connect() as conn:
         n_today = conn.execute("SELECT COUNT(*) FROM abuse_reports WHERE reported_at > ?", (time.time() - 86400,)).fetchone()[0]
     if n_today >= abuseipdb.MAX_REPORTS_PER_DAY:
         raise HTTPException(status_code=429, detail=f"1日の通報は{abuseipdb.MAX_REPORTS_PER_DAY}件までです")
     ts = time.strftime("%Y-%m-%dT%H:%M:%S+00:00", time.gmtime(cand["last_epoch"]))
     try:
-        data = await asyncio.to_thread(abuseipdb.report_ip, key, ip, cand["categories"], cand["comment"], ts)
+        data = abuseipdb.report_ip(key, ip, cand["categories"], cand["comment"], ts)
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
     with _db_connect() as conn:
@@ -2083,6 +2085,90 @@ async def api_abuse_report(payload: dict):
             _record_blocks([{"ip": ip, "score": data.get("abuseConfidenceScore"), "events": cand["count"], "reported": True}], mode, time.time())
             blocked = mode == "on"
     return {"ok": True, "score": data.get("abuseConfidenceScore"), "blocked": blocked}
+
+
+@app.post("/api/abuse-report")
+async def api_abuse_report(payload: dict):
+    """人が確認して押した時だけ送る。対象IPは、画面から渡された値を信用せず、サーバー側で候補を再計算して照合する。"""
+    key = _get_app_setting("abuseipdb_api_key")
+    if not key:
+        raise HTTPException(status_code=400, detail="APIキーが未設定です")
+    ip = (payload.get("ip") or "").strip()
+    cand = next((c for c in await asyncio.to_thread(_abuse_candidates) if c["ip"] == ip), None)
+    if not cand:
+        raise HTTPException(status_code=400, detail="通報の対象ではありません（回数不足・通報済み・対象外のIP）")
+    return await asyncio.to_thread(_send_abuse_report, key, cand)
+
+
+# --- 信頼度が高いIPの自動通報（ユーザーの指示: 信頼度100%は確認なしで通報してよい） ---
+AUTO_REPORT_DEFAULT_SCORE = 100
+AUTO_REPORT_PER_RUN = 10  # 1回の実行で送る上限
+AUTO_REPORT_RESERVE = 10  # 1日の上限のうち、人が手で通報する分に空けておく件数
+
+
+def _auto_report_settings() -> tuple[bool, int]:
+    enabled = _get_app_setting("abuseipdb_auto_report") != "off"  # 既定はオン
+    try:
+        score = min(max(int(_get_app_setting("abuseipdb_auto_report_score") or AUTO_REPORT_DEFAULT_SCORE), 75), 100)
+    except ValueError:
+        score = AUTO_REPORT_DEFAULT_SCORE
+    return enabled, score
+
+
+def _abuse_auto_report_run() -> dict:
+    enabled, min_score = _auto_report_settings()
+    result = {"enabled": enabled, "reported": []}
+    key = _get_app_setting("abuseipdb_api_key")
+    if not enabled or not key:
+        return result
+    with _db_connect() as conn:
+        n_today = conn.execute("SELECT COUNT(*) FROM abuse_reports WHERE reported_at > ?", (time.time() - 86400,)).fetchone()[0]
+        known_good = {r["ip"] for r in conn.execute("SELECT ip FROM known_good_ips").fetchall()}
+    budget = min(AUTO_REPORT_PER_RUN, abuseipdb.MAX_REPORTS_PER_DAY - AUTO_REPORT_RESERVE - n_today)
+    if budget <= 0:
+        return result
+    cands = _abuse_candidates()
+    # LAN内・SSH許可リスト・自分が使うIPは、評判にかかわらず通報しない
+    safe = set(autoblock.pick_targets({c["ip"]: 1 for c in cands}, min_events=1, whitelist=[w["entry"] for w in _load_ssh_whitelist()],
+                                      known_good=known_good, already=set(), limit=len(cands) or 1))
+    lookups = 0
+    for c in cands:
+        if len(result["reported"]) >= budget:
+            break
+        if c["ip"] not in safe:
+            continue
+        score = c["score"]
+        if score is None:
+            if lookups >= 10:
+                continue  # 照会は1回に10件まで。残りは次の実行で
+            lookups += 1
+            rep = _rep_lookup(c["ip"], timeout=6)
+            score = rep["score"] if rep else None
+        if score is None or score < min_score:
+            continue
+        try:
+            _send_abuse_report(key, c)
+        except HTTPException as e:
+            print(f"[abuse-auto] 通報に失敗 {autoblock.mask(c['ip'])}: {e.detail}")
+            if e.status_code == 429:
+                break
+            continue
+        result["reported"].append({"ip": c["ip"], "score": score, "events": c["count"]})
+    if result["reported"]:
+        listed = ", ".join(f"{autoblock.mask(r['ip'])}(信頼度{r['score']}%・{r['events']}回)" for r in result["reported"][:8])
+        more = f" ほか{len(result['reported']) - 8}件" if len(result["reported"]) > 8 else ""
+        _emit_internal_alert("abuse_report", f"AbuseIPDBへ自動通報: {len(result['reported'])}件（{listed}{more}）", "info", "sentinel")
+    return result
+
+
+async def _abuse_auto_report_loop():
+    await asyncio.sleep(180)
+    while True:
+        try:
+            await asyncio.to_thread(_abuse_auto_report_run)
+        except Exception as e:  # 自動通報の失敗で他の機能を止めない
+            print(f"[abuse-auto] 実行に失敗: {e}")
+        await asyncio.sleep(600)
 
 
 @app.get("/api/public-feed")
@@ -2312,6 +2398,7 @@ async def _on_startup():
     asyncio.create_task(_heartbeat_loop())
     asyncio.create_task(_exposure_loop())
     asyncio.create_task(_auto_block_loop())
+    asyncio.create_task(_abuse_auto_report_loop())
 
 
 @app.middleware("http")

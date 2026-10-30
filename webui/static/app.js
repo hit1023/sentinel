@@ -1637,6 +1637,8 @@ async function loadAbuseSettings() {
     document.getElementById("abuseApiKey").value = "";
     document.getElementById("abuseMinEvents").value = d.min_events;
     document.getElementById("abuseCriticalScore").value = d.critical_score;
+    document.getElementById("abuseAutoReport").checked = !!d.auto_report;
+    document.getElementById("abuseAutoReportScore").value = d.auto_report_score;
     const ab = await (await fetch("/api/auto-block")).json();
     document.getElementById("autoBlockMode").value = ab.mode;
     document.getElementById("autoBlockScore").value = ab.min_score;
@@ -1648,7 +1650,8 @@ async function loadAbuseSettings() {
   } catch (e) { console.error("AbuseIPDB設定の取得に失敗", e); }
 }
 document.getElementById("saveAbuseBtn")?.addEventListener("click", async () => {
-  const body = { min_events: document.getElementById("abuseMinEvents").value, critical_score: document.getElementById("abuseCriticalScore").value };
+  const body = { min_events: document.getElementById("abuseMinEvents").value, critical_score: document.getElementById("abuseCriticalScore").value,
+    auto_report: document.getElementById("abuseAutoReport").checked, auto_report_score: document.getElementById("abuseAutoReportScore").value };
   const key = document.getElementById("abuseApiKey").value.trim();
   if (key) body.api_key = key;  // 入力した時だけ送る（空のまま保存しても登録済みキーを消さない）
   try {
