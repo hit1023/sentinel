@@ -77,6 +77,9 @@ DOCS = {
     "UBUNTU-CVE-2025-32463": osv_doc("UBUNTU-CVE-2025-32463", "sudo", "1.9.15p5-3ubuntu5.24.04.1", "high"),
     "UBUNTU-CVE-2024-0001": osv_doc("UBUNTU-CVE-2024-0001", "openssl", "3.0.13-0ubuntu3.1", "high"),
     "UBUNTU-CVE-2024-0002": osv_doc("UBUNTU-CVE-2024-0002", "openssl", None, "low"),
+    # CVE-2026-123158: OSVの詳細文ではmusl libc + PAM無効のsshdのみ対象。
+    # Ubuntuのopensshは版数だけで該当するが、ホスト本体は対象外の可能性が高い。
+    "UBUNTU-CVE-2026-123158": osv_doc("UBUNTU-CVE-2026-123158", "openssh", None, "high"),
 }
 
 
@@ -87,6 +90,7 @@ class FakeOsv:
         self.matches = {
             ("sudo", "1.9.15p5-3ubuntu5"): ["UBUNTU-CVE-2025-32463", "USN-7604-1"],
             ("openssl", "3.0.13-0ubuntu3"): ["UBUNTU-CVE-2024-0001", "UBUNTU-CVE-2024-0002"],
+            ("openssh", "1:9.6p1-3ubuntu13.20"): ["UBUNTU-CVE-2026-123158"],
         }
         self.kev = ["CVE-2025-32463"]
         self.detail_calls = []
@@ -175,6 +179,33 @@ class VulnScannerTests(unittest.TestCase):
         self.assertEqual(len(self.alerts), 1)
         self.assertEqual(self.alerts[0][0], "critical")
         self.assertIn("CVE-2024-0002", self.alerts[0][1])
+
+    def test_conditional_cve_is_not_critical_but_stays_listed(self):
+        # CVE-2026-123158: KEV入りでも、Ubuntuのopensshはmusl+PAM無効の条件に
+        # 当てはまらない可能性が高いため、CRITICAL通知は出さない。一覧からは消さない。
+        self.osv.kev = ["CVE-2026-123158"]
+        self.send([{"name": "openssh", "version": "1:9.6p1-3ubuntu13.20"}], "a")
+        summary = self.scanner.summary()
+        self.assertEqual(summary["hosts"][0]["total"], 1)
+        self.assertEqual(summary["hosts"][0]["kev"], 0)
+        self.assertEqual(summary["hosts"][0]["conditional"], 1)
+        top = summary["findings"][0]
+        self.assertEqual(top["cve"], "CVE-2026-123158")
+        self.assertEqual(top["action_key"], "conditional")
+        self.assertNotIn("critical", [s for s, _ in self.alerts])
+        self.assertNotIn("CVE-2026-123158", " ".join(m for _, m in self.alerts))
+
+    def test_conditional_cve_does_not_silence_other_kev(self):
+        # 条件付きCVEと通常のKEVが混ざった場合、通常のKEVだけCRITICALになる。
+        self.osv.kev = ["CVE-2026-123158", "CVE-2025-32463"]
+        self.send(
+            [{"name": "openssh", "version": "1:9.6p1-3ubuntu13.20"},
+             {"name": "sudo", "version": "1.9.15p5-3ubuntu5"}],
+            "a",
+        )
+        self.assertIn("critical", [s for s, _ in self.alerts])
+        self.assertIn("CVE-2025-32463", " ".join(m for _, m in self.alerts))
+        self.assertNotIn("CVE-2026-123158", " ".join(m for _, m in self.alerts))
 
     def test_details_are_cached(self):
         self.send([{"name": "openssl", "version": "3.0.13-0ubuntu3"}], "a")
@@ -270,9 +301,9 @@ class VulnScannerTests(unittest.TestCase):
 
 
 class RemediationTests(unittest.TestCase):
-    def finding(self, package, fixed=None, availability=None, in_kev=0, version="1"):
+    def finding(self, package, fixed=None, availability=None, in_kev=0, version="1", cve=None):
         return {"package": package, "installed_version": version, "fixed_version": fixed,
-                "availability": availability, "in_kev": in_kev}
+                "availability": availability, "in_kev": in_kev, "cve": cve}
 
     def test_fix_available_upgrades_installed_binaries(self):
         r = vuln.remediation(self.finding("openssl", "2", "No subscription required"), ["libssl3t64", "openssl"], None)
@@ -325,6 +356,19 @@ class RemediationTests(unittest.TestCase):
         r = vuln.remediation(self.finding("mozjs91"), ["libmozjs-91-0"], None)
         self.assertEqual(r["label"], "修正待ち：不要なら削除")
         self.assertIn("apt-cache rdepends --installed libmozjs-91-0", [s.get("command") for s in r["steps"]])
+
+    def test_conditional_openssh_cve_guides_musl_pam_check(self):
+        r = vuln.remediation(
+            self.finding("openssh", in_kev=1, version="1:9.6p1-3ubuntu13.20",
+                         cve="CVE-2026-123158"),
+            ["openssh-server"], None,
+        )
+        self.assertEqual(r["key"], "conditional")
+        self.assertIn("musl", r["label"])
+        commands = " ".join(s.get("command") or "" for s in r["steps"])
+        self.assertIn("ldd", commands)
+        self.assertIn("sshd -T", commands)
+        self.assertTrue(any("10.6p2" in n for n in r["notes"]))
 
 
 if __name__ == "__main__":

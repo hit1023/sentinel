@@ -44,6 +44,33 @@ DETAIL_WRITE_CHUNK = 200
 # (UBUNTU-CVE-*/DEBIAN-CVE-*)としても返ってくるため、二重計上しないよう除外する
 SKIP_ID_PREFIXES = ("USN-", "DSA-", "DLA-", "DTSA-")
 
+# 版数だけでは対象かどうか決まらないCVE。OSVの詳細文に限定条件が書かれている
+# ものだけを載せる。該当するホストは一覧には残すが、CRITICAL通知からは外す。
+#  - CVE-2026-123158 (OpenSSH, "sshole"): musl libcでビルドされPAM無効のsshd
+#    のみが対象。Ubuntu/DebianはglibcでPAM有効が既定のため、ホスト本体は
+#    対象外の可能性が高い。OSVのaffected範囲には修正版が無く、版数(<10.6p2)
+#    だけで判定するとUbuntuホストが全て誤検知になる。
+#    ただしAlpine/muslベースのコンテナでsshdが動いている場合は別途対象に
+#    なり得るため、見つけた場合は削除せず、対応ガイドで条件確認を促す。
+CONDITIONAL_CVES = {
+    "CVE-2026-123158": {
+        "package": "openssh",
+        "ecosystems": ("Ubuntu:", "Debian:"),
+        "reason": "musl libc + PAM無効のsshdのみ対象。Ubuntu/Debianはglibc + PAM有効が既定",
+    },
+}
+
+
+def _is_conditional_cve(finding: dict, ecosystem: str | None) -> bool:
+    """版数だけでは対象と決められない条件付きCVEかどうか。"""
+    rule = CONDITIONAL_CVES.get(finding.get("cve") or "")
+    return bool(
+        rule
+        and finding.get("package") == rule["package"]
+        and ecosystem
+        and ecosystem.startswith(rule["ecosystems"])
+    )
+
 PRIORITY_RANK = {"critical": 4, "high": 3, "medium": 2, "low": 1, "negligible": 0, "unknown": -1}
 
 
@@ -410,6 +437,13 @@ class VulnScanner:
             key for key, f in current.items()
             if _is_kernel_headers_only(f["package"], bin_index.get((f["package"], f["installed_version"]), []))
         }
+        # 条件付きCVEも同じ扱い: 一覧には残すが、版数だけでは対象と決められないため
+        # KEVのCRITICAL通知からは外す。対応ガイド(remediation)で条件確認を促す。
+        conditional = {
+            key for key, f in current.items()
+            if _is_conditional_cve(f, ecosystem)
+        }
+        quiet.update(conditional)
         # 件数のみ集計（一括扱い）への出入りは、パッケージが変わったわけではないので
         # 「解消」「新規」として通知しない（OSV側の件数増減で閾値をまたいだだけ）
         bulk_now = {(b["package"], b["version"]) for b in bulk}
@@ -440,7 +474,12 @@ class VulnScanner:
 
         if is_first_scan:
             fixable = sum(1 for f in current.values() if f["fixed_version"])
-            kev_count = sum(1 for f in current.values() if f["in_kev"])
+            # 通知から外したもの(カーネルヘッダのみ・条件付きCVE)はKEV件数にも数えない。
+            # そうしないと、CRITICAL通知を出さないのにサマリーだけ「KEV 1件」と読めてしまう。
+            kev_count = sum(
+                1 for key, f in current.items()
+                if f["in_kev"] and key not in (quiet or set())
+            )
             bulk_note = "".join(
                 f"、{b['package']} {b['count']}件は件数のみ" for b in bulk[:3]
             ) + (f"、他{len(bulk) - 3}パッケージも件数のみ" if len(bulk) > 3 else "")
@@ -546,7 +585,11 @@ class VulnScanner:
                 "received_at": r["received_at"],
                 "scanned_at": r["scanned_at"],
                 "total": len(host_findings),
-                "kev": sum(1 for f in host_findings if f["in_kev"]),
+                # 条件付きCVEは一覧には残すが、対象と決められないためKEV件数には数えない
+                "kev": sum(1 for f in host_findings
+                           if f["in_kev"] and not _is_conditional_cve(f, r["ecosystem"])),
+                "conditional": sum(1 for f in host_findings
+                                   if _is_conditional_cve(f, r["ecosystem"])),
                 "fixable": sum(1 for f in host_findings if f["fixed_version"]),
                 "by_priority": by_priority,
                 # カーネル等、件数のみ集計したパッケージ（KEV入りは通常の一覧にも含まれる）
@@ -567,6 +610,9 @@ class VulnScanner:
             )
             f["action_key"] = action["key"]
             f["action_label"] = action["label"]
+            f["conditional"] = _is_conditional_cve(
+                f, next((r["ecosystem"] for r in inv_rows if r["host"] == f["host"]), None)
+            )
             f["summary"] = (details.get(f["vuln_id"]) or "")[:300]
             k = kev_info.get(f["cve"])
             if k:
@@ -575,7 +621,7 @@ class VulnScanner:
                 f["kev_ransomware"] = k["ransomware"]
         findings.sort(
             key=lambda f: (
-                -f["in_kev"],
+                -(1 if f["in_kev"] and not f.get("conditional") else 0),
                 -PRIORITY_RANK.get(f["priority"], -1),
                 0 if f["fixed_version"] else 1,
                 f["package"],
@@ -721,6 +767,34 @@ def remediation(f: dict, binaries: list[str], kernel_release: str | None,
     notes = []
     if f.get("in_kev"):
         notes.append("CISA KEV掲載＝実際の攻撃での悪用が確認済み。他の脆弱性より優先して対応する")
+
+    if f.get("cve") in CONDITIONAL_CVES and pkg == CONDITIONAL_CVES[f["cve"]]["package"]:
+        # CVE-2026-123158: 版数だけでは対象と決められない。Ubuntu/Debianの
+        # sshdはglibc + PAM有効が既定で、ホスト本体は対象外の可能性が高い。
+        # 見つけた場合は消さず、実際のsshdの条件確認を促す。musl + PAM無効
+        # + PasswordAuthentication yesが揃った場合のみ本当の対象になる。
+        return {
+            "key": "conditional",
+            "label": "条件付き：musl+PAM無効のsshdのみ対象",
+            "steps": [
+                {"text": "このCVEはmusl libcでビルドされPAM無効のsshdだけが対象。"
+                         "Ubuntu/DebianのsshdはglibcでPAM有効が既定のため、ホスト本体は"
+                         "対象外の可能性が高い。まず実際のsshdを確認する",
+                 "command": "ldd $(command -v sshd) | grep -i -E 'musl|libc'; "
+                            "sshd -T 2>/dev/null | grep -i -E '^(usepam|passwordauthentication)'"},
+                {"text": "musl + PAM無効 + PasswordAuthentication yesが揃った場合のみ本当の対象。"
+                         "その場合は修正版(10.6p2以降)へ更新してsshdを再起動する。上げられない間は"
+                         "PasswordAuthentication noにしてsshdを再起動する(鍵ログインできる別セッションを開いたまま行うこと)",
+                 "command": "sudo awk -F: '$2==\"*\"{print $1}' /etc/shadow"},
+                {"text": "ホスト本体だけでなく、Alpine/muslベースのコンテナでsshdが動いていないかも確認する",
+                 "command": "docker ps --format '{{.Names}} {{.Image}}' 2>/dev/null || true"},
+            ],
+            "notes": notes + [
+                "UbuntuにOpenSSH 10.6p2は来ないため、版数だけで10.6p2への更新を求めないこと",
+                "SENTINELはこのCVEをCRITICAL通知から除外している。条件に当てはまることが"
+                "確認できたら、個別に対応すること",
+            ],
+        }
 
     if _is_kernel_headers_only(pkg, binaries):
         return {
