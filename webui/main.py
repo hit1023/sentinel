@@ -22,6 +22,7 @@ import abuseipdb
 import autoblock
 import attackmap
 import exposure
+import noise_guard
 import playbooks
 import publicfeed
 import vuln
@@ -860,11 +861,26 @@ def _enrich_with_reputation(record: dict):
         record["message"] += " → 悪質なIPからのログイン成功のためCRITICALに引き上げ"
 
 
+_noise_guard = noise_guard.NoiseGuard()
+_noise_guard_cache = {"at": 0.0, "on": True}
+
+
+def _noise_guard_enabled() -> bool:
+    """app_settingsの noise_guard が "off" のときだけ無効（既定は有効）。毎回DBを引かないよう60秒キャッシュ。"""
+    now = time.time()
+    if now - _noise_guard_cache["at"] > 60:
+        _noise_guard_cache["on"] = _get_app_setting("noise_guard") != "off"
+        _noise_guard_cache["at"] = now
+    return _noise_guard_cache["on"]
+
+
 def _process_new_record(record: dict):
     """エージェントからのingestとサーバー自身が生成するアラート(ハートビート等)で
     共通の処理: 許可リスト・抑制ルール適用 → 保存。通知は呼び出し側で行う。"""
     _apply_ssh_whitelist(record)
     _apply_suppressions(record)
+    # 抑制ルール・許可リストの後、WARNINGの洪水を抑える（同じ内容の再発・1時間の件数上限）
+    notice = _noise_guard.apply(record) if _noise_guard_enabled() else None
     try:
         _enrich_with_reputation(record)
         _note_login_success(record)  # 評判で引き上げた後（CRITICALになったものは覚えない）
@@ -873,6 +889,8 @@ def _process_new_record(record: dict):
     _append_alert(record)
     _persist_important(record)
     _resolve_secret_alerts(record)
+    if notice:
+        _emit_internal_alert(notice["category"], notice["message"], notice["severity"], notice["host"])
 
 
 def _load_suppressions() -> list[dict]:

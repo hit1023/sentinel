@@ -41,8 +41,20 @@
 2. **ファイル整合性監視**（`app/integrity.py`、簡易AIDE）
    - `/etc`, `/root/.ssh`, `/etc/nginx`, `/etc/docker` 等の重要ファイルのSHA-256を記録
    - 初回はベースライン作成のみ。以降は追加/削除/改ざん（ハッシュ不一致）を検知
+   - **パッケージ更新による変更はINFOに格下げ**（`app/dpkg_verify.py`）: 変更後のファイルの内容が
+     dpkgのデータベースに記録された配布物のMD5と一致するときだけ、正規の更新としてINFOにする
+     （通常ファイルは`/var/lib/dpkg/info/*.md5sums`、設定ファイルは`/var/lib/dpkg/status`のConffiles欄）。
+     時刻の近さではなく内容で判定するので、更新の直後に書き換えられたものは一致せずCRITICALのまま。
+     利用者が編集した設定ファイル（`sshd_config`等）や`critical_patterns`（SSH鍵）は対象外。dpkgの無いホストは従来どおり
 3. **プロセス・ネットワーク監視**（`app/procnet_watch.py`）
-   - `known_process_keywords`に無い未知のプロセスが起動したら通知（部分一致判定）
+   - 未知のプロセスは『pid』ではなく**正体（名前＋実行ファイル＋コマンド。pid・端末番号・バージョン等の
+     数字は無視）**で追い、新しい正体を初めて見たときだけ通知する。SSHログインのたびに新しいpidで
+     立ち上がるユーザーセッションの常駐プロセス（`(sd-pam)`、pipewire等）が洪水になる問題への対策。
+     初回（旧バージョンからの更新直後を含む）は、動いているものを黙って基準に登録する
+   - **通知の重さは危険な兆候で決める**: 実行ファイルが一時領域（`/tmp`等）にある／削除済み／攻撃で
+     よく使われる名前のツール／（未知のものが）外部アドレスへ通信中、のいずれかがあればWARNING。
+     ただ未知なだけならINFO。`known_process_keywords`とコード側の既定の既知リスト
+     （`BUILTIN_KNOWN_PROCESS_PATTERNS`）に一致するものは通知しないが、一時領域に置かれた偽装は通知する
    - `known_listen_ports`以外での新規LISTENを通知
    - 高CPU使用率のプロセスを通知（`cpu_alert_percent`、既定90%）
    - **CPU%計測には要注意の実装ノートあり**（[教訓](known-issues-and-lessons.md)参照）

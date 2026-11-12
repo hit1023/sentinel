@@ -16,6 +16,12 @@ def resolve_fs_path(path: str) -> str:
     return prefix + path if prefix else path
 
 
+def strip_fs_prefix(path: str) -> str:
+    """resolve_fs_pathの逆。HITIDS_FS_PREFIXが付いていれば外して実パスに戻す。"""
+    prefix = os.environ.get("HITIDS_FS_PREFIX", "")
+    return path[len(prefix):] if prefix and path.startswith(prefix) else path
+
+
 def resolve_log_path(path: str) -> str:
     """auth_watch用。HITIDS_LOG_PREFIX(Docker運用では/hostlogs)を前置する。"""
     prefix = os.environ.get("HITIDS_LOG_PREFIX", "")

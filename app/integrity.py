@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 
+import dpkg_verify
 import paths
 
 
@@ -118,12 +119,26 @@ class IntegrityWatcher:
         base_paths = set(baseline.keys())
         cur_paths = set(current.keys())
 
-        for path in sorted(cur_paths - base_paths):
+        added = sorted(cur_paths - base_paths)
+        changed = [p for p in sorted(cur_paths & base_paths) if current[p]["hash"] != baseline[p]["hash"]]
+        # 新規・変更のうち、dpkgの記録と内容が一致する（＝パッケージ更新による正規の書き換え）ものを
+        # 先に洗い出す。SSH鍵まわり(critical_patterns)は対象外にして、必ず従来どおり通知する。
+        package_verified = self._package_verified(
+            [p for p in added + changed if not self._is_critical_path(p)]
+        )
+
+        for path in added:
             if self._is_critical_path(path):
                 self.notifier.alert(
                     "integrity_watch",
                     f"SSH関連ファイルの新規作成を検知（不正な鍵の追加の可能性）: {path}",
                     "critical",
+                )
+            elif path in package_verified:
+                self.notifier.alert(
+                    "integrity_watch",
+                    f"パッケージ更新に伴う新規ファイル（dpkg検証済み）: {path}",
+                    "info",
                 )
             else:
                 self.notifier.alert("integrity_watch", f"新規ファイルを検知: {path}", "warning")
@@ -138,19 +153,35 @@ class IntegrityWatcher:
             else:
                 self.notifier.alert("integrity_watch", f"ファイルの削除を検知: {path}", "warning")
 
-        for path in sorted(cur_paths & base_paths):
-            if current[path]["hash"] != baseline[path]["hash"]:
-                if self._is_critical_path(path):
-                    self.notifier.alert(
-                        "integrity_watch",
-                        f"SSH公開鍵ファイルの変更を検知（不正な鍵の追加/改ざんの可能性）: {path}",
-                        "critical",
-                    )
-                else:
-                    self.notifier.alert(
-                        "integrity_watch",
-                        f"ファイル改ざんの疑い（ハッシュ不一致）: {path}",
-                        "critical",
-                    )
+        for path in changed:
+            if self._is_critical_path(path):
+                self.notifier.alert(
+                    "integrity_watch",
+                    f"SSH公開鍵ファイルの変更を検知（不正な鍵の追加/改ざんの可能性）: {path}",
+                    "critical",
+                )
+            elif path in package_verified:
+                self.notifier.alert(
+                    "integrity_watch",
+                    f"パッケージ更新に伴う変更（dpkg検証済み・内容が配布物と一致）: {path}",
+                    "info",
+                )
+            else:
+                self.notifier.alert(
+                    "integrity_watch",
+                    f"ファイル改ざんの疑い（ハッシュ不一致）: {path}",
+                    "critical",
+                )
 
         self._save_baseline(current)
+
+    def _package_verified(self, scanned_paths):
+        """スキャンしたパス（Docker運用ではプレフィックス付き）のうち、dpkgの記録と内容が
+        一致するものを、スキャン時と同じ表記で返す。判定に失敗しても従来の判定に倒す。"""
+        if not scanned_paths:
+            return set()
+        try:
+            real_to_scanned = {paths.strip_fs_prefix(p): p for p in scanned_paths}
+            return {real_to_scanned[r] for r in dpkg_verify.verify(list(real_to_scanned))}
+        except Exception:
+            return set()
