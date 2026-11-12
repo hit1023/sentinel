@@ -96,6 +96,7 @@
      - 以降: KEV入りの新規脆弱性、または既存脆弱性のKEV追加 → CRITICAL
      - Ubuntu優先度high以上かつ修正版ありの新規脆弱性 → WARNING
      - パッケージ更新で解消 → INFO
+   - 版数だけでは対象と決められない条件付きCVE（例: CVE-2026-123158はmusl libc＋PAM無効のsshdのみ対象）は、一覧には残すがCRITICAL通知とKEV件数からは外す。対応ガイドで実際のsshdの条件確認を促す（`webui/vuln.py` の `CONDITIONAL_CVES`）。
    - カーネル（1ソースで数千CVEに該当）は件数のみ集計し、KEV入りだけ個別表示
    - ダッシュボードの「VULNERABILITIES」パネルでホスト別件数と一覧を表示
    - **対応ガイド**: 一覧の「対応」列に推奨アクション（aptで更新／Ubuntu Proで更新／
